@@ -60,7 +60,7 @@ struct ProfilePickerView: View {
                             .frame(width: 26, height: 26)
                             .background(selected ? pink : Color.white.opacity(0.10), in: Circle())
                             .accessibilityHidden(true)
-                        Text(profile.title).font(.system(size: 14))
+                        Text(QG(profile.title)).font(.system(size: 14))
                         Spacer(minLength: 12)
                         Image(systemName: "checkmark")
                             .font(.system(size: 12, weight: .semibold))
@@ -76,9 +76,9 @@ struct ProfilePickerView: View {
                 }
                 .buttonStyle(.plain)
                 .onHover { hovered = $0 ? profile : nil }
-                .accessibilityLabel("\(profile.title) profile")
+                .accessibilityLabel(QG("%@ profile", QG(profile.title)))
                 .accessibilityAddTraits(selected ? [.isSelected] : [])
-                .help(profile.explanation)
+                .help(QG(profile.explanation))
             }
             if let settings {
                 Divider().overlay(.white.opacity(0.06)).padding(.horizontal, 8).padding(.vertical, 7)
@@ -112,13 +112,13 @@ struct ProfilePickerTrigger: NSViewRepresentable {
         let button = NSButton(title: "", target: context.coordinator, action: #selector(Coordinator.open(_:)))
         button.isTransparent = true
         button.setButtonType(.momentaryPushIn)
-        button.setAccessibilityLabel("Choose profile")
+        button.setAccessibilityLabel(QG("Choose profile"))
         return button
     }
 
     func updateNSView(_ button: NSButton, context: Context) {
         context.coordinator.model = model
-        button.setAccessibilityValue(model.currentProfile?.title ?? "Custom")
+        button.setAccessibilityValue(QG(model.currentProfile?.title ?? "Custom"))
     }
 
     final class Coordinator: NSObject {
@@ -141,7 +141,7 @@ final class ProfilePickerController {
 
     init(model: AppModel) {
         self.model = model
-        panel.title = "QuietGlass Profiles"
+        panel.title = QG("QuietGlass Profiles")
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true

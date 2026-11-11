@@ -10,7 +10,7 @@ struct TrackingChoicePicker: View {
     private var title: String { options.first { $0.id == selection }?.title ?? "" }
     var body: some View {
         HStack {
-            Text(title).lineLimit(1)
+            Text(QG(title)).lineLimit(1)
             Spacer(minLength: 8)
             Image(systemName: "chevron.up.chevron.down")
                 .font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
@@ -35,13 +35,13 @@ private struct TrackingChoiceMenu: NSViewRepresentable {
         let button = NSButton(title: "", target: context.coordinator, action: #selector(Coordinator.open(_:)))
         button.isTransparent = true
         button.setButtonType(.momentaryPushIn)
-        button.setAccessibilityLabel(label)
+        button.setAccessibilityLabel(QG(label))
         return button
     }
     func updateNSView(_ button: NSButton, context: Context) {
         context.coordinator.value = self
         button.isEnabled = enabled
-        button.setAccessibilityValue(title)
+        button.setAccessibilityValue(QG(title))
     }
     final class Coordinator: NSObject {
         var value: TrackingChoiceMenu?
@@ -49,7 +49,7 @@ private struct TrackingChoiceMenu: NSViewRepresentable {
             guard let value else { return }
             let menu = NSMenu(); menu.autoenablesItems = false; menu.minimumWidth = sender.bounds.width
             for choice in value.options {
-                let item = NSMenuItem(title: choice.title, action: #selector(choose(_:)), keyEquivalent: "")
+                let item = NSMenuItem(title: QG(choice.title), action: #selector(choose(_:)), keyEquivalent: "")
                 item.target = self; item.representedObject = choice.id
                 item.state = choice.id == value.selection ? .on : .off
                 menu.addItem(item)

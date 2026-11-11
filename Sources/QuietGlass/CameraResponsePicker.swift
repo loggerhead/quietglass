@@ -6,7 +6,7 @@ struct CameraResponsePicker: View {
 
     var body: some View {
         HStack {
-            Text(selection.title)
+            Text(QG(selection.title))
             Spacer(minLength: 8)
             Image(systemName: "chevron.up.chevron.down")
                 .font(.system(size: 9, weight: .medium))
@@ -33,14 +33,14 @@ private struct CameraResponseMenu: NSViewRepresentable {
         let button = NSButton(title: "", target: context.coordinator, action: #selector(Coordinator.open(_:)))
         button.isTransparent = true
         button.setButtonType(.momentaryPushIn)
-        button.setAccessibilityLabel("Camera response")
-        button.setAccessibilityHelp("Choose a warning before blur or immediate automatic blur")
+        button.setAccessibilityLabel(QG("Camera response"))
+        button.setAccessibilityHelp(QG("Choose a warning before blur or immediate automatic blur"))
         return button
     }
 
     func updateNSView(_ button: NSButton, context: Context) {
         context.coordinator.selection = $selection
-        button.setAccessibilityValue(selection.title)
+        button.setAccessibilityValue(QG(selection.title))
     }
 
     final class Coordinator: NSObject {
@@ -52,7 +52,7 @@ private struct CameraResponseMenu: NSViewRepresentable {
             menu.autoenablesItems = false
             menu.minimumWidth = sender.bounds.width
             for response in NearbyResponse.allCases {
-                let item = NSMenuItem(title: response.title, action: #selector(choose(_:)), keyEquivalent: "")
+                let item = NSMenuItem(title: QG(response.title), action: #selector(choose(_:)), keyEquivalent: "")
                 item.target = self
                 item.representedObject = response.rawValue
                 item.state = selection.wrappedValue == response ? .on : .off

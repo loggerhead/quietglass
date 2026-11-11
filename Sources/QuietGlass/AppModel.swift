@@ -252,7 +252,7 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         displayCalibrationTask = Task { [weak self] in
             for second in stride(from: 3, through: 1, by: -1) {
                 guard let self else { return }
-                self.displayCalibrationNotice = "Face the selected display · \(second)"
+                self.displayCalibrationNotice = QG("Face the selected display · %ld", second)
                 do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
             }
             guard let self, self.perDisplayTracking, self.canRecenter, let latest = self.latest,
@@ -302,12 +302,12 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         return nearbyBlurUnavailable ? "Privacy blur unavailable" : nearby.noticeTitle
     }
     var nearbyNoticeDetail: String {
-        if let seconds = protectionCheck.demoSeconds { return "Test blur starts in \(seconds) seconds" }
+        if let seconds = protectionCheck.demoSeconds { return QG("Test blur starts in %ld seconds", seconds) }
         if protectionCheck.demoBlurred {
             return privacy.captureUnavailable ? "Test blur unavailable · Check Screen Recording" : "Test blur clears automatically · Esc to stop"
         }
         if let seconds = nearby.pauseSecondsRemaining {
-            return String(format: "Resumes in %d:%02d", seconds / 60, seconds % 60)
+            return QG("Resumes in %ld:%02ld", seconds / 60, seconds % 60)
         }
         if nearbyBlurUnavailable { return "Open Settings to restore it" }
         if nearby.covered && !privacy.ready { return "Preparing blur · Esc to clear" }
@@ -521,7 +521,7 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         stopPreview()
         clearOverlay()
         status = "Watching your head motion"
-        detail = "Small movements stay clear. Turn past \(Int(comfort))° to cover the screen."
+        detail = QG("Small movements stay clear. Turn past %ld° to cover the screen.", Int(comfort))
     }
 
     func dismissShield(file: StaticString = #fileID, line: UInt = #line) {
@@ -544,7 +544,7 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
             stopPreview()
             if privacy.captureUnavailable { status = "Privacy capture needs attention" }
             else if !privacy.ready { status = "Preparing privacy blur" }
-            else { status = privacy.nearbyCovered ? "Covered · \(nearby.noticeTitle)" : privacy.peeking ? "Peeking at your screen" : "Privacy blur is on" }
+            else { status = privacy.nearbyCovered ? QG("Covered · %@", QG(nearby.noticeTitle)) : privacy.peeking ? "Peeking at your screen" : "Privacy blur is on" }
             return
         }
         guard !previewing else { return }
@@ -559,7 +559,7 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         }
         if privacy.ruleMode == .pause {
             clearOverlay()
-            status = "Head blur paused for \(privacy.frontAppName)"
+            status = QG("Head blur paused for %@", privacy.frontAppName)
             return
         }
         if trackingSource == .camera {
@@ -589,7 +589,7 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         if !response.dismissedUntilCentered { dismissedForLoss = false }
         guard applyCoverage(value, direction: .from(offset)) else { return }
         if response.dismissedUntilCentered { status = "Shield dismissed until you face center" }
-        else if value > 0.001 { status = "Screen covered \(Int(value * 100))%" }
+        else if value > 0.001 { status = QG("Screen covered %ld%%", Int(value * 100)) }
         else { status = "Watching your head motion" }
     }
 
@@ -793,7 +793,7 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         if flags.contains(.shift) { modifiers |= UInt32(shiftKey); label += "⇧" }
         if flags.contains(.command) { modifiers |= UInt32(cmdKey); label += "⌘" }
         let names: [UInt16: String] = [49: "Space", 36: "Return", 48: "Tab", 51: "Delete", 123: "←", 124: "→", 125: "↓", 126: "↑"]
-        label += names[event.keyCode] ?? event.charactersIgnoringModifiers?.uppercased() ?? "Key \(event.keyCode)"
+        label += names[event.keyCode] ?? event.charactersIgnoringModifiers?.uppercased() ?? QG("Key %ld", Int(event.keyCode))
         if keyCode == UInt32(event.keyCode), keyModifiers == modifiers {
             recordingShortcut = false
             shortcutError = nil

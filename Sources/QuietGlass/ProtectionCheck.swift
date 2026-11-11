@@ -71,7 +71,7 @@ final class ProtectionCheck: ObservableObject {
               sample.capturedAt <= clock(), clock() - sample.capturedAt <= 1 else { return }
         lastFrame = sample.capturedAt
         faces = sample.bounds.filter { !$0.isEmpty && $0.minX >= 0 && $0.minY >= 0 && $0.maxX <= 1 && $0.maxY <= 1 }
-        message = sample.count == 0 ? "No faces in view" : sample.count == 1 ? "One face in view" : "\(sample.count) faces in view"
+        message = sample.count == 0 ? QG("No faces in view") : sample.count == 1 ? QG("One face in view") : QG("%ld faces in view", sample.count)
         if sample.count == 1, let face = faces.first, (0.33...0.67).contains(face.midX) { sawCenter = true }
         if sawCenter, faces.count > 1 {
             // The maker stays in the center while the second person enters each edge.
@@ -83,7 +83,7 @@ final class ProtectionCheck: ObservableObject {
 
     private func fail(_ failure: NearbyCameraFailure) {
         generation += 1; camera?.stop(); camera = nil; session = nil
-        running = false; faces = []; message = failure.title + ". Check the camera and try again."
+        running = false; faces = []; message = QG("%@. Check the camera and try again.", QG(failure.title))
     }
 
     func demonstrate(_ response: NearbyResponse) {
@@ -154,7 +154,7 @@ struct ProtectionCheckView: View {
                         result("Right", number: "3", observed: check.sawRight)
                     }
                     .padding(.horizontal, 24).padding(.top, 4)
-                    Text(coverageInstruction)
+                    Text(QG(coverageInstruction))
                         .font(.system(size: 12)).foregroundStyle(secondary)
                         .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, minHeight: 30)
@@ -198,7 +198,7 @@ struct ProtectionCheckView: View {
                 .overlay(alignment: .bottomLeading) {
                     HStack(spacing: 6) {
                         Circle().fill(check.faces.isEmpty ? secondary : accent).frame(width: 5, height: 5)
-                        Text(check.message).font(.system(size: 11, weight: .medium))
+                        Text(QG(check.message)).font(.system(size: 11, weight: .medium))
                     }
                         .foregroundStyle(.white).padding(.horizontal, 10).padding(.vertical, 6)
                         .background(.black.opacity(0.6), in: Capsule()).padding(10)
@@ -209,9 +209,9 @@ struct ProtectionCheckView: View {
                 CoverageGuide(accent: accent).frame(width: 224, height: 132)
                     .padding(.bottom, 4).accessibilityHidden(true)
                 VStack(spacing: 8) {
-                    Text(check.running ? "Starting camera…" : "Check the space around you")
+                    Text(QG(check.running ? "Starting camera…" : "Check the space around you"))
                         .font(.system(size: 16, weight: .medium))
-                    Text(check.running ? "Your preview will appear here." : check.message)
+                    Text(QG(check.running ? "Your preview will appear here." : check.message))
                         .font(.system(size: 12)).foregroundStyle(secondary)
                         .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: 280)
@@ -241,12 +241,12 @@ struct ProtectionCheckView: View {
                 }
             }
             .frame(width: 18, height: 18)
-            Text(label).font(.system(size: 12, weight: .medium))
+            Text(QG(label)).font(.system(size: 12, weight: .medium))
                 .foregroundStyle(observed ? Color.white.opacity(0.9) : secondary)
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(label).accessibilityValue(observed ? "Detected" : "Not checked")
+        .accessibilityLabel(QG(label)).accessibilityValue(QG(observed ? "Detected" : "Not checked"))
     }
 
     private var responsePreview: some View {
@@ -256,24 +256,24 @@ struct ProtectionCheckView: View {
                 .foregroundStyle(check.demonstrated && !demonstrating ? accent : secondary)
                 .frame(width: 22).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 5) {
-                Text(demonstrating ? "Preview in progress" : check.demonstrated ? "Preview complete" : response == .warning ? "Warning and blur" : "Automatic blur")
+                Text(QG(demonstrating ? "Preview in progress" : check.demonstrated ? "Preview complete" : response == .warning ? "Warning and blur" : "Automatic blur"))
                     .font(.system(size: 13, weight: .medium))
-                Text(responseDetail).font(.system(size: 11)).foregroundStyle(secondary)
+                Text(QG(responseDetail)).font(.system(size: 11)).foregroundStyle(secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Button(demonstrating ? "Stop" : check.demonstrated ? "Replay" : "Try it") {
+            Button(QG(demonstrating ? "Stop" : check.demonstrated ? "Replay" : "Try it")) {
                 if demonstrating { check.stopDemonstration() }
                 else { check.demonstrate(response) }
             }
             .disabled(!canBlur && !demonstrating)
-            .accessibilityLabel(demonstrating ? "Stop preview" : "Preview \(response == .warning ? "warning and blur" : "automatic blur")")
+            .accessibilityLabel(demonstrating ? QG("Stop preview") : QG("Preview %@", QG(response == .warning ? "warning and blur" : "automatic blur")))
         }
         .padding(.vertical, 2)
     }
 
     private var responseDetail: String {
-        if let seconds = check.demoSeconds { return "Blur starts in \(seconds) seconds." }
+        if let seconds = check.demoSeconds { return QG("Blur starts in %ld seconds.", seconds) }
         if check.demoBlurred { return "Blur clears automatically after 3 seconds." }
         if !canBlur { return "Allow Screen Recording to try this." }
         if check.demonstrated { return "Your warning delay hasn’t changed." }
@@ -298,7 +298,7 @@ struct ProtectionCheckView: View {
                     .padding(.vertical, 3).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).accessibilityLabel("About this check")
-                .accessibilityValue(showingDetails ? "Expanded" : "Collapsed")
+                .accessibilityValue(QG(showingDetails ? "Expanded" : "Collapsed"))
             }
             if showingDetails {
                 Text("Only people inside the camera’s view can be detected. Nearby monitoring pauses during a test and resumes when you close this check. Your saved warning delay stays unchanged. This checks coverage, not your identity.")

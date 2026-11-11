@@ -71,10 +71,10 @@ struct OwnerEnrollmentScreen: View {
                                previewSession: previewSession)
                     .frame(width: scanning ? 204 : 144, height: scanning ? 204 : 144)
                     .padding(.top, 8).padding(.bottom, 24).accessibilityHidden(true)
-                Text(title).font(.system(size: 22, weight: .semibold))
+                Text(QG(title)).font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.92)).multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.updatesFrequently)
-                Text(subtitle).font(.system(size: 13)).foregroundStyle(.white.opacity(0.55))
+                Text(QG(subtitle)).font(.system(size: 13)).foregroundStyle(.white.opacity(0.55))
                     .lineSpacing(4).multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true).padding(.top, 10)
                 if scanning {
@@ -85,10 +85,10 @@ struct OwnerEnrollmentScreen: View {
                         }
                     }
                     .padding(.top, 22).accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Face setup progress").accessibilityValue("\(Int(progress * 100)) percent")
+                    .accessibilityLabel("Face setup progress").accessibilityValue(QG("%ld percent", Int(progress * 100)))
                 }
                 if let error {
-                    Text(error).font(.system(size: 12)).foregroundStyle(.orange).multilineTextAlignment(.center)
+                    Text(QG(error)).font(.system(size: 12)).foregroundStyle(.orange).multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true).padding(.top, 16)
                 }
                 VStack(spacing: 8) {
@@ -105,7 +105,7 @@ struct OwnerEnrollmentScreen: View {
                         .font(.system(size: 11)).foregroundStyle(.white.opacity(0.50))
                         .padding(.vertical, 3).contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain).accessibilityValue(showingDetails ? "Expanded" : "Collapsed")
+                    .buttonStyle(.plain).accessibilityValue(QG(showingDetails ? "Expanded" : "Collapsed"))
                     if showingDetails {
                         Text("No photos or video are saved. Your face template is encrypted in Keychain and can be deleted in Settings. Recognition can make mistakes or be fooled by a photo or video. Lock your Mac when you leave it.")
                             .font(.system(size: 11)).lineSpacing(3).foregroundStyle(.white.opacity(0.52))
@@ -120,7 +120,7 @@ struct OwnerEnrollmentScreen: View {
                     Button(action: action) {
                         HStack(spacing: 8) {
                             if busy { ProgressView().controlSize(.mini).tint(.white) }
-                            Text(busy ? (ready ? "Saving…" : "Waiting for confirmation…") : (ready ? "Save my face" : "Get started"))
+                            Text(QG(busy ? (ready ? "Saving…" : "Waiting for confirmation…") : (ready ? "Save my face" : "Get started")))
                                 .font(.system(size: 13, weight: .semibold))
                         }
                         .foregroundStyle(Color.white.opacity(0.88)).frame(maxWidth: .infinity, minHeight: 36)

@@ -43,13 +43,13 @@ struct InlineDeleteButton: View {
             .buttonStyle(.plain)
             .focused($focused, equals: .trash)
             .disabled(waiting || completed)
-            .accessibilityLabel(completed ? "Deleted \(itemName)" : expanded ? "Cancel deleting \(itemName)" : "Delete \(itemName)")
-            .accessibilityValue(expanded ? "Confirmation open" : "")
-            .help(expanded ? "Cancel deletion" : "Delete \(itemName)")
+            .accessibilityLabel(completed ? QG("Deleted %@", QG(itemName)) : expanded ? QG("Cancel deleting %@", QG(itemName)) : QG("Delete %@", QG(itemName)))
+            .accessibilityValue(QG(expanded ? "Confirmation open" : ""))
+            .help(expanded ? QG("Cancel deletion") : QG("Delete %@", QG(itemName)))
 
             if expanded {
                 HStack(spacing: 4) {
-                    confirmationButton("checkmark", label: "Confirm deleting \(itemName)", control: .confirm,
+                    confirmationButton("checkmark", label: QG("Confirm deleting %@", QG(itemName)), control: .confirm,
                                        color: Color(red: 0.94, green: 0.68, blue: 0.91)) {
                         guard !waiting, !isBusy else { return }
                         waiting = true
@@ -57,9 +57,9 @@ struct InlineDeleteButton: View {
                         withAnimation(animation) { expanded = false }
                         onConfirm()
                     }
-                    .help(confirmationHelp)
-                    confirmationButton("xmark", label: "Cancel deletion", control: .cancel, color: .secondary, action: cancel)
-                        .help("Keep your \(itemName)")
+                    .help(QG(confirmationHelp))
+                    confirmationButton("xmark", label: QG("Cancel deletion"), control: .cancel, color: .secondary, action: cancel)
+                        .help(QG("Keep your %@", QG(itemName)))
                 }
                 .padding(5)
                 .background(Color.black.opacity(0.16), in: RoundedRectangle(cornerRadius: 10))
@@ -101,7 +101,7 @@ struct InlineDeleteButton: View {
         }
         .buttonStyle(.plain)
         .focused($focused, equals: control)
-        .accessibilityLabel(label)
+        .accessibilityLabel(QG(label))
     }
 
     private func cancel() {

@@ -31,7 +31,7 @@ final class HeadSetupController: NSObject, NSWindowDelegate {
     init(model: AppModel) {
         self.model = model
         super.init()
-        window.title = "QuietGlass Head Tracking"
+        window.title = QG("QuietGlass Head Tracking")
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.backgroundColor = NSColor(white: 0.095, alpha: 1)
@@ -89,7 +89,7 @@ private struct HeadSetupView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(stageName)
+                Text(QG(stageName))
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white.opacity(0.55))
                 Spacer()
@@ -101,20 +101,20 @@ private struct HeadSetupView: View {
                     }
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Step \(stage) of 4")
+                .accessibilityLabel(QG("Step %ld of 4", stage))
             }
             .padding(.bottom, 20)
             illustration
                 .frame(height: 196)
                 .padding(.bottom, 22)
             VStack(spacing: 10) {
-                Text(title)
+                Text(QG(title))
                     .accessibilityAddTraits(.isHeader)
                     .contentTransition(.opacity)
                     .font(.system(size: 24, weight: .semibold))
                     .tracking(-0.5)
                     .foregroundStyle(.white.opacity(0.94))
-                Text(instructions)
+                Text(QG(instructions))
                     .font(.system(size: 13))
                     .foregroundStyle(.white.opacity(0.55))
                     .lineSpacing(3)
@@ -130,7 +130,7 @@ private struct HeadSetupView: View {
                 .frame(height: 36)
                 .contentTransition(.opacity)
             Spacer(minLength: 16)
-            Button(primaryLabel, action: advance)
+            Button(QG(primaryLabel), action: advance)
                 .buttonStyle(HeadSetupButtonStyle())
                 .disabled(!canAdvance)
                 .keyboardShortcut(.defaultAction)
@@ -289,7 +289,7 @@ private struct HeadSetupView: View {
         .animation(reduceMotion ? nil : .interactiveSpring(response: 0.24, dampingFraction: 0.86), value: headPitch)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Live head position")
-        .accessibilityValue("Horizontal \(Int(headYaw)) degrees, vertical \(Int(headPitch)) degrees")
+        .accessibilityValue(QG("Horizontal %ld degrees, vertical %ld degrees", Int(headYaw), Int(headPitch)))
     }
 
     private var samplePreview: some View {
@@ -316,33 +316,33 @@ private struct HeadSetupView: View {
         .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: testCoverage)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Sample protection test")
-        .accessibilityValue(testCoverage > 0.02 ? "Blurred" : "Clear")
+        .accessibilityValue(QG(testCoverage > 0.02 ? "Blurred" : "Clear"))
     }
 
     @ViewBuilder private var status: some View {
         if let message {
-            Text(message).font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Text(QG(message)).font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
         } else if phase == .connection {
             HStack(spacing: 9) {
                 if model.enabled { ProgressView().controlSize(.small) }
-                Text(model.enabled ? "Waiting for live motion…" : model.status).font(.system(size: 12))
+                Text(QG(model.enabled ? "Waiting for live motion…" : model.status)).font(.system(size: 12))
             }.foregroundStyle(.secondary)
         } else if phase == .movement {
-            Text(movement.isComplete ? "All directions checked" : "\(movement.completed.count) of 4 directions checked")
+            Text(movement.isComplete ? QG("All directions checked") : QG("%ld of 4 directions checked", movement.completed.count))
                 .font(.system(size: 12, weight: .medium)).foregroundStyle(pink)
         } else if phase == .learning {
             Text("Head blur is paused during setup")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
         } else if phase == .review {
-            Button("Keep my current \(Int(model.comfort))°") { beginTest() }
+            Button(QG("Keep my current %ld°", Int(model.comfort))) { beginTest() }
                 .buttonStyle(.plain)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.white.opacity(0.6))
         } else if phase == .test {
-            Text(testedCenter && isCentered ? "Motion check complete" : testedAway ? "Face forward to clear the sample" : "Turn until the sample begins to blur")
+            Text(QG(testedCenter && isCentered ? "Motion check complete" : testedAway ? "Face forward to clear the sample" : "Turn until the sample begins to blur"))
                 .font(.system(size: 12)).foregroundStyle(pink).multilineTextAlignment(.center)
         } else {
-            Label(model.connected ? "AirPods connected" : "Compatible AirPods required", systemImage: "airpodspro")
+            Label(QG(model.connected ? "AirPods connected" : "Compatible AirPods required"), systemImage: "airpodspro")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
         }
     }
@@ -397,7 +397,7 @@ private struct HeadSetupView: View {
         case .welcome: return model.hasCompletedHeadSetup ? "Recalibrate head tracking" : "Set up head tracking"
         case .connection: return "Connect your AirPods"
         case .center: return "Face your screen"
-        case .movement: return movement.isComplete ? "Movement looks good" : "Look gently \(directionName)"
+        case .movement: return movement.isComplete ? "Movement looks good" : QG("Look gently %@", QG(directionName))
         case .readyToLearn, .learning: return "Find your comfortable range"
         case .review: return "Choose your sensitivity"
         case .test: return testedCenter && isCentered ? "You're ready" : "Try your blur"
@@ -428,7 +428,7 @@ private struct HeadSetupView: View {
         case .movement: return "Continue"
         case .readyToLearn: return "Learn for 8 seconds"
         case .learning: return "Learning…"
-        case .review: return "Use \(Int(model.suggestedComfort ?? model.comfort))°"
+        case .review: return QG("Use %ld°", Int(model.suggestedComfort ?? model.comfort))
         case .test: return !model.screenPermission ? "Allow screen access" : "Finish setup"
         }
     }

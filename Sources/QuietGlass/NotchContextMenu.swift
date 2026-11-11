@@ -47,7 +47,7 @@ struct NotchContextMenuView: View {
         return Button { action(item) } label: {
             HStack(spacing: 10) {
                 AppIconView(icon: icon, size: 18)
-                Text(title)
+                Text(QG(title))
                 Spacer(minLength: 5)
                 if let shortcut {
                     Text(shortcut).font(.system(size: 11))
@@ -64,7 +64,7 @@ struct NotchContextMenuView: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .accessibilityLabel(title)
+        .accessibilityLabel(QG(title))
         .onHover { inside in
             if inside, enabled { state.highlighted = item }
             else if state.highlighted == item { state.highlighted = nil }

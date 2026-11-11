@@ -612,8 +612,8 @@ struct NearbyNoticeView: View {
                 Image(systemName: model.nearby.canRetry || model.nearbyBlurUnavailable ? "exclamationmark.triangle" : "person.2.fill")
                     .font(.system(size: 17)).foregroundStyle(.orange)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model.nearbyNoticeTitle).font(.system(size: 12, weight: .medium))
-                    Text(model.nearbyNoticeDetail).font(.system(size: 11)).foregroundStyle(.white.opacity(0.65))
+                    Text(QG(model.nearbyNoticeTitle)).font(.system(size: 12, weight: .medium))
+                    Text(QG(model.nearbyNoticeDetail)).font(.system(size: 11)).foregroundStyle(.white.opacity(0.65))
                 }
                 Spacer(minLength: 0)
             }
@@ -629,7 +629,7 @@ struct NearbyNoticeView: View {
             .contentShape(RoundedRectangle(cornerRadius: 13))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(model.nearbyNoticeTitle + ". " + model.nearbyNoticeDetail)
+        .accessibilityLabel(QG("%@. %@", QG(model.nearbyNoticeTitle), QG(model.nearbyNoticeDetail)))
         .accessibilityHint("Open Nearby people settings")
     }
 }
@@ -699,8 +699,8 @@ private struct NotchBarView: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(primary && !state.expanded ? (model.nearbyNeedsAttention ? model.nearbyNoticeTitle : "QuietGlass notch") : label(item))
-        .accessibilityHint(primary && !state.expanded ? "Hover to reveal controls, or right-click for settings" : "")
+        .accessibilityLabel(QG(primary && !state.expanded ? (model.nearbyNeedsAttention ? QG(model.nearbyNoticeTitle) : "QuietGlass notch") : label(item)))
+        .accessibilityHint(QG(primary && !state.expanded ? "Hover to reveal controls, or right-click for settings" : ""))
         .onHover { hint($0 && state.expanded ? item : nil) }
     }
 
@@ -727,7 +727,7 @@ private struct NotchHintView: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            Text(label)
+            Text(QG(label))
             if action == .recenter {
                 Text(model.shortcutLabel).foregroundStyle(Color(red: 0.94, green: 0.68, blue: 0.91))
             }
@@ -776,7 +776,7 @@ private struct NotchControlsView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
-                Button(model.enabled ? "Pause" : "Start") { model.setEnabled(!model.enabled) }
+                Button(QG(model.enabled ? "Pause" : "Start")) { model.setEnabled(!model.enabled) }
                     .buttonStyle(QuietGlassButtonStyle())
                 Button("Recenter") { model.recenter() }
                     .buttonStyle(QuietGlassButtonStyle()).disabled(!model.canRecenter)
@@ -786,20 +786,20 @@ private struct NotchControlsView: View {
                         .font(.system(size: 18, weight: .regular))
                         .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.white)
-                        .accessibilityLabel(model.trackingSource == .camera ? "Camera tracking" : "AirPods connected")
+                        .accessibilityLabel(QG(model.trackingSource == .camera ? "Camera tracking" : "AirPods connected"))
                 }
             }
 
             if !model.screenPermission {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(model.screenAccessPreviouslyGranted
+                    Text(QG(model.screenAccessPreviouslyGranted
                          ? "macOS needs screen access restored for this copy of QuietGlass. Enable it in Screen Settings, then restart the app."
-                         : "Allow QuietGlass in Screen Recording, then restart the app if macOS asks.")
+                         : "Allow QuietGlass in Screen Recording, then restart the app if macOS asks."))
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
                         Button("Screen Settings") { model.requestScreenPermission() }
-                        Button(model.restarting ? "Restarting…" : "Restart QuietGlass") { model.restartForScreenPermission() }
+                        Button(QG(model.restarting ? "Restarting…" : "Restart QuietGlass")) { model.restartForScreenPermission() }
                             .disabled(model.restarting)
                     }.buttonStyle(QuietGlassButtonStyle()).controlSize(.small)
                 }
@@ -808,11 +808,11 @@ private struct NotchControlsView: View {
                 Button("Open Motion Settings") { model.openMotionSettings() }.buttonStyle(QuietGlassButtonStyle())
             }
             if let notice = model.captureNotice {
-                Text(notice).font(.system(size: 10)).foregroundStyle(.orange)
+                Text(QG(notice)).font(.system(size: 10)).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let notice = model.privacy.notice {
-                Text(notice).font(.system(size: 10)).foregroundStyle(.orange)
+                Text(QG(notice)).font(.system(size: 10)).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -825,7 +825,7 @@ private struct NotchControlsView: View {
                         .accessibilityHidden(true)
                     Text("Profile").font(.system(size: 13, weight: .medium))
                     Spacer()
-                    Text(model.currentProfile?.title ?? "Custom").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(QG(model.currentProfile?.title ?? "Custom")).font(.system(size: 12)).foregroundStyle(.secondary)
                     Image(systemName: "chevron.right").font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
                 }
@@ -844,21 +844,21 @@ private struct NotchControlsView: View {
                 }.contentShape(Rectangle())
             }
             .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
-            .accessibilityLabel(advanced ? "Hide more controls" : "Show more controls")
+            .accessibilityLabel(QG(advanced ? "Hide more controls" : "Show more controls"))
             if advanced {
                 VStack(spacing: 10) {
                     adjustment("Transition", value: $model.transition, range: 5...30, suffix: "°")
                     HStack {
                         Text("Recenter").font(.system(size: 11)).foregroundStyle(.secondary)
                         Spacer()
-                        Button(model.recordingShortcut ? "Press keys…" : model.shortcutLabel) {
+                        Button(QG(model.recordingShortcut ? "Press keys…" : model.shortcutLabel)) {
                             model.recordingShortcut.toggle()
                         }
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(Color(red: 0.94, green: 0.68, blue: 0.91))
                     }
                     if let error = model.shortcutError {
-                        Text(error).font(.system(size: 10)).foregroundStyle(.orange)
+                        Text(QG(error)).font(.system(size: 10)).foregroundStyle(.orange)
                     }
                 }
             }
@@ -867,7 +867,7 @@ private struct NotchControlsView: View {
                 Button(action: preview) {
                     HStack(spacing: 5) {
                         AppIconView(icon: model.previewing ? .cancel : .play, size: 14)
-                        Text(model.previewing ? "Clear preview" : "Preview blur")
+                        Text(QG(model.previewing ? "Clear preview" : "Preview blur"))
                     }
                 }.buttonStyle(.plain).font(.system(size: 11))
                 Spacer()
@@ -890,25 +890,25 @@ private struct NotchControlsView: View {
     }
 
     private var hint: String {
-        if model.privacy.fullScreen || model.privacy.focusEnabled || model.nearby.enabled { return "\(model.status). Press Escape to clear it." }
-        if model.status == "Motion permission needed" { return "Allow AirPods motion to start." }
-        if !model.screenPermission { return "Allow screen access for the blur effect." }
-        if model.previewing { return "Preview clears after five seconds. Click again or press Escape to clear sooner." }
-        if model.trackingSource == .camera { return model.enabled ? model.cameraTracking.message : "Face your screen, then tap Start to calibrate the camera." }
-        if !model.enabled { return "Put on your AirPods, then tap Start." }
-        if !model.connected { return "Waiting for your AirPods to connect…" }
-        if !model.calibrated { return "Face your screen, then tap Recenter." }
-        return model.status
+        if model.privacy.fullScreen || model.privacy.focusEnabled || model.nearby.enabled { return QG("%@. Press Escape to clear it.", QG(model.status)) }
+        if model.status == "Motion permission needed" { return QG("Allow AirPods motion to start.") }
+        if !model.screenPermission { return QG("Allow screen access for the blur effect.") }
+        if model.previewing { return QG("Preview clears after five seconds. Click again or press Escape to clear sooner.") }
+        if model.trackingSource == .camera { return model.enabled ? QG(model.cameraTracking.message) : QG("Face your screen, then tap Start to calibrate the camera.") }
+        if !model.enabled { return QG("Put on your AirPods, then tap Start.") }
+        if !model.connected { return QG("Waiting for your AirPods to connect…") }
+        if !model.calibrated { return QG("Face your screen, then tap Recenter.") }
+        return QG(model.status)
     }
 
     private func adjustment(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String) -> some View {
         VStack(spacing: 2) {
             HStack {
-                Text(title)
+                Text(QG(title))
                 Spacer()
                 Text("\(Int(value.wrappedValue))\(suffix)").monospacedDigit().foregroundStyle(.secondary)
             }.font(.system(size: 11))
-            Slider(value: value, in: range, step: 1).controlSize(.small).accessibilityLabel(title)
+            Slider(value: value, in: range, step: 1).controlSize(.small).accessibilityLabel(QG(title))
         }
     }
 }
@@ -932,8 +932,8 @@ private struct CloseControlsButton: NSViewRepresentable {
         button.setButtonType(.momentaryChange)
         button.target = context.coordinator
         button.action = #selector(Coordinator.close)
-        button.setAccessibilityLabel("Close controls")
-        button.toolTip = "Close controls"
+        button.setAccessibilityLabel(QG("Close controls"))
+        button.toolTip = QG("Close controls")
         return button
     }
 

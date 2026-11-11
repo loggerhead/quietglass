@@ -98,7 +98,7 @@ final class AppUpdates: ObservableObject {
                 message = "The release information could not be verified."; return
             }
             preferences.set(Date(), forKey: "lastUpdateCheck")
-            if latest > current { downloadPage = url; message = "QuietGlass \(release.tag_name) is available." }
+            if latest > current { downloadPage = url; message = QG("QuietGlass %@ is available.", release.tag_name) }
             else { message = "You have the newest available version." }
         } catch { message = "Could not check for updates. Check your connection and try again." }
     }

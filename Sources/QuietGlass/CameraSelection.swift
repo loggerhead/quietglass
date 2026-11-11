@@ -33,7 +33,7 @@ struct CameraChoicePicker: View {
 
     var body: some View {
         HStack {
-            Text(title).lineLimit(1)
+            Text(QG(title)).lineLimit(1)
             Spacer(minLength: 8)
             Image(systemName: "chevron.up.chevron.down")
                 .font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
@@ -44,7 +44,7 @@ struct CameraChoicePicker: View {
         .background(ControlAppearance.fill, in: RoundedRectangle(cornerRadius: 10))
         .accessibilityHidden(true)
         .overlay(CameraChoiceMenu(cameras: cameras, selection: selection, title: title, select: select, refresh: refresh))
-        .help(title)
+        .help(QG(title))
     }
 }
 
@@ -61,13 +61,13 @@ private struct CameraChoiceMenu: NSViewRepresentable {
         let button = NSButton(title: "", target: context.coordinator, action: #selector(Coordinator.open(_:)))
         button.isTransparent = true
         button.setButtonType(.momentaryPushIn)
-        button.setAccessibilityLabel("Camera")
+        button.setAccessibilityLabel(QG("Camera"))
         return button
     }
     func updateNSView(_ button: NSButton, context: Context) {
         context.coordinator.value = self
         button.isEnabled = enabled
-        button.setAccessibilityValue(title)
+        button.setAccessibilityValue(QG(title))
     }
 
     final class Coordinator: NSObject {
@@ -84,7 +84,7 @@ private struct CameraChoiceMenu: NSViewRepresentable {
                 menu.addItem(item)
             }
             menu.addItem(.separator())
-            let refresh = NSMenuItem(title: "Refresh cameras", action: #selector(refreshCameras(_:)), keyEquivalent: "")
+            let refresh = NSMenuItem(title: QG("Refresh cameras"), action: #selector(refreshCameras(_:)), keyEquivalent: "")
             refresh.target = self; menu.addItem(refresh)
             menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: sender)
         }

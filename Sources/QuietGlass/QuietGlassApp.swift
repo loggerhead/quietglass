@@ -66,30 +66,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item("Quit QuietGlass", #selector(quit), in: applicationMenu, key: "q")
         applicationItem.submenu = applicationMenu
         mainMenu.addItem(applicationItem)
-        let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
-        let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
-        let redo = editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        let editItem = NSMenuItem(title: QG("Edit"), action: nil, keyEquivalent: "")
+        let editMenu = NSMenu(title: QG("Edit"))
+        editMenu.addItem(withTitle: QG("Undo"), action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: QG("Redo"), action: Selector(("redo:")), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(withTitle: QG("Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: QG("Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: QG("Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: QG("Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
-        let viewItem = NSMenuItem(title: "View", action: nil, keyEquivalent: "")
-        let viewMenu = NSMenu(title: "View")
+        let viewItem = NSMenuItem(title: QG("View"), action: nil, keyEquivalent: "")
+        let viewMenu = NSMenu(title: QG("View"))
         let sidebar = item("Toggle Sidebar", #selector(toggleSettingsSidebar), in: viewMenu, key: "s")
         sidebar.keyEquivalentModifierMask = [.command]
         viewMenu.addItem(.separator())
-        let fullScreen = NSMenuItem(title: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
+        let fullScreen = NSMenuItem(title: QG("Enter Full Screen"), action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         fullScreen.keyEquivalentModifierMask = [.control, .command]
         viewMenu.addItem(fullScreen)
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
-        let helpItem = NSMenuItem(title: "Help", action: nil, keyEquivalent: "")
-        let helpMenu = NSMenu(title: "Help")
+        let helpItem = NSMenuItem(title: QG("Help"), action: nil, keyEquivalent: "")
+        let helpMenu = NSMenu(title: QG("Help"))
         item("QuietGlass Help", #selector(showHelp), in: helpMenu)
         item("Report an Issue…", #selector(reportIssue), in: helpMenu)
         helpItem.submenu = helpMenu
@@ -144,12 +144,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func buildMenu(_ menu: NSMenu) {
         menu.removeAllItems()
-        let title = NSMenuItem(title: "QuietGlass · \(model.status)", action: nil, keyEquivalent: "")
+        let title = NSMenuItem(title: QG("QuietGlass · %@", model.status), action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
         menu.addItem(.separator())
-        let profiles = NSMenuItem(title: "Profile", action: nil, keyEquivalent: "")
-        let profileMenu = NSMenu(title: "Profile")
+        let profiles = NSMenuItem(title: QG("Profile"), action: nil, keyEquivalent: "")
+        let profileMenu = NSMenu(title: QG("Profile"))
         for profile in PrivacyProfile.allCases {
             let entry = item(profile.title, #selector(selectProfile(_:)), in: profileMenu)
             entry.representedObject = profile.rawValue
@@ -179,7 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @discardableResult private func item(_ title: String, _ action: Selector, in menu: NSMenu,
                                         key: String = "", shortcut: String? = nil) -> NSMenuItem {
-        let displayTitle = shortcut.map { "\(title)    \($0)" } ?? title
+        let displayTitle = shortcut.map { QG(title) + "    " + $0 } ?? QG(title)
         let entry = NSMenuItem(title: displayTitle, action: action, keyEquivalent: key)
         entry.target = self
         menu.addItem(entry)
@@ -200,7 +200,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.orderFrontStandardAboutPanel(options: [
-            .credits: NSAttributedString(string: "Privacy for what’s on your Mac.\nBuilt by Clinton Imaro · Open source under the MIT License.")
+            .credits: NSAttributedString(string: QG("Privacy for what’s on your Mac.\nBuilt by Clinton Imaro · Open source under the MIT License."))
         ])
     }
     @objc private func showHelp() {

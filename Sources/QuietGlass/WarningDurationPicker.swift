@@ -38,8 +38,8 @@ struct WarningDurationPicker: View {
                 }
                 .buttonStyle(.plain)
                 .background(editing ? ControlAppearance.fill : .clear, in: RoundedRectangle(cornerRadius: 10))
-                .accessibilityLabel(editing ? "Save warning duration" : "Edit warning duration")
-                .help(editing ? "Save duration" : "Change how long to warn before blurring")
+                .accessibilityLabel(QG(editing ? "Save warning duration" : "Edit warning duration"))
+                .help(QG(editing ? "Save duration" : "Change how long to warn before blurring"))
             }
             .background(editing ? .clear : ControlAppearance.fill, in: RoundedRectangle(cornerRadius: 10))
             .modifier(DurationCorrectionShake(amount: shake))
@@ -52,7 +52,7 @@ struct WarningDurationPicker: View {
                 correction = nil
             }
             if let correction {
-                Text(correction).font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(QG(correction)).font(.system(size: 10)).foregroundStyle(.secondary)
                     .accessibilityAddTraits(.updatesFrequently)
             }
         }
@@ -67,14 +67,14 @@ struct WarningDurationPicker: View {
                     .textFieldStyle(.plain)
                     .multilineTextAlignment(.trailing)
                     .focused($focused, equals: field)
-                    .accessibilityLabel(field == .hours ? "Warning delay hours" : "Warning delay minutes")
+                    .accessibilityLabel(QG(field == .hours ? "Warning delay hours" : "Warning delay minutes"))
                     .onChange(of: text.wrappedValue) { _, value in
                         let digits = value.filter { $0.isASCII && $0.isNumber }
                         let limit = field == .hours ? 24 : 59
                         let number = digits.isEmpty ? 0 : (Int(digits) ?? limit + 1)
                         if number > limit {
                             text.wrappedValue = String(limit)
-                            corrected("Maximum \(limit) \(field == .hours ? "hours" : "minutes")")
+                            corrected(QG("Maximum %ld %@", limit, QG(field == .hours ? "hours" : "minutes")))
                         } else if digits != value { text.wrappedValue = digits }
                     }
                     .frame(width: 22)
@@ -82,7 +82,7 @@ struct WarningDurationPicker: View {
                 Text(field == .hours ? String(Int(duration) / 3600) : String(Int(duration) / 60 % 60))
                     .frame(minWidth: 12, alignment: .trailing)
             }
-            Text(label).foregroundStyle(.secondary)
+            Text(QG(label)).foregroundStyle(.secondary)
         }
         .font(.system(size: 13, weight: .medium)).monospacedDigit()
         .frame(width: width, height: 34)

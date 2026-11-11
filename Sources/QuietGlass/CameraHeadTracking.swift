@@ -91,7 +91,7 @@ final class CameraHeadTracking: ObservableObject {
         generation += 1; camera?.stop(); camera = nil
         timer?.invalidate(); timer = nil
         policy.fail(); failure = error
-        message = error.title + (policy.coverage > 0 ? " · Screen stays protected" : " · Try again")
+        message = QG("%@%@", QG(error.title), QG(policy.coverage > 0 ? " · Screen stays protected" : " · Try again"))
         onChange?()
     }
     func stop() {

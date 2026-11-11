@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh-Hans</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>zh-Hans</string>
+	</array>
 	<key>CFBundleDisplayName</key>
 	<string>QuietGlass</string>
 	<key>CFBundleExecutable</key>
@@ -23,10 +29,10 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>QuietGlass uses the camera for camera head tracking, Nearby people, and optional owner recognition. Images stay on your Mac and are never saved. If you set up Recognize me, a face template is saved in this Mac’s Keychain.</string>
+	<string>QuietGlass 使用摄像头进行头部追踪、附近的人检测以及可选的本人识别。图像仅在本机处理且不会被保存。若启用“识别我”，人脸模板会保存在本机钥匙串中。</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMotionUsageDescription</key>
-	<string>QuietGlass uses AirPods head motion to cover your screen when you look away. Motion stays on your Mac.</string>
+	<string>QuietGlass 使用 AirPods 头部动作在你视线离开时遮挡屏幕。动作数据仅在本机处理。</string>
 </dict>
 </plist>

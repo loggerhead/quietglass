@@ -15,7 +15,7 @@ final class AreaSelectionController {
     func show(frame: CGRect, selected: @escaping (CGRect) -> Void) {
         close()
         let panel = AreaSelectionPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.title = "Choose a protected area"
+        panel.title = QG("Choose a protected area")
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 6)
         panel.backgroundColor = .clear
         panel.isOpaque = false
@@ -54,7 +54,7 @@ private final class AreaSelectionView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.withAlphaComponent(0.32).setFill()
         bounds.fill()
-        let caption = "Drag over the area to blur · Escape to close"
+        let caption = QG("Drag over the area to blur · Escape to close")
         let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14, weight: .medium), .foregroundColor: NSColor.white]
         let size = (caption as NSString).size(withAttributes: attributes)
         let label = CGRect(x: max(12, bounds.midX - size.width / 2), y: bounds.maxY - 52, width: min(bounds.width - 24, size.width), height: 24)

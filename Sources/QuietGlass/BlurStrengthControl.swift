@@ -50,7 +50,7 @@ struct BlurStrengthControl: View {
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.white.opacity(0.12), lineWidth: 1))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Sample blur preview")
-        .accessibilityValue("Blur strength \(Int(strength))")
+        .accessibilityValue(QG("Blur strength %ld", Int(strength)))
     }
 
     @ViewBuilder private var sampleScene: some View {
@@ -132,8 +132,8 @@ struct PrivacyLevelSlider: View {
                 Slider(value: $value, in: range, step: 1)
                     .tint(accent)
                     .controlSize(.large)
-                    .accessibilityLabel(label)
-                    .accessibilityValue(valueLabel)
+                    .accessibilityLabel(QG(label))
+                    .accessibilityValue(QG(valueLabel))
                 HStack {
                     Circle().frame(width: 3, height: 3)
                     Spacer()
@@ -157,7 +157,7 @@ struct PrivacyLevelSlider: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .accessibilityLabel(label)
-        .help(label)
+        .accessibilityLabel(QG(label))
+        .help(QG(label))
     }
 }

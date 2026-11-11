@@ -302,7 +302,7 @@ final class PrivacyController: NSObject, ObservableObject, SCContentSharingPicke
         guard let pid = frontPID else { notice = "Open the window you want to protect first."; return }
         guard let item = Self.frontWindowItem(in: windowList(onScreen: true), for: pid),
               let number = item[kCGWindowNumber as String] as? NSNumber else {
-            notice = "No visible window is available for \(frontAppName)."
+            notice = QG("No visible window is available for %@.", frontAppName)
             return
         }
         select(ProtectedWindow(id: number.uint32Value, owner: pid,
@@ -672,7 +672,7 @@ final class PrivacyController: NSObject, ObservableObject, SCContentSharingPicke
         captureUnavailable = true
         notice = denied ? "Screen access was revoked. Restore it, then click Resume." : "Capture stopped. Click Resume to retry."
         if wantsProtection {
-            notice! += " The last available blur is retained until capture resumes."
+            notice = QG(notice!) + QG(" The last available blur is retained until capture resumes.")
             refreshGeometry()
             timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.refreshGeometry() }

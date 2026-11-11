@@ -28,7 +28,7 @@ final class PrivacySettingsController: NSObject, NSWindowDelegate {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1112, height: 828),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         super.init()
-        window.title = "QuietGlass Settings"
+        window.title = QG("QuietGlass Settings")
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
@@ -294,7 +294,7 @@ private struct PrivacySettingsView: View {
             }
             .buttonStyle(.plain)
             .onHover { hoveringSidebarToggle = $0; revealSidebar($0) }
-            .accessibilityLabel(sidebarPinned ? "Collapse sidebar" : "Expand sidebar")
+            .accessibilityLabel(QG(sidebarPinned ? "Collapse sidebar" : "Expand sidebar"))
             .accessibilityHint("Command S. Hover to preview navigation, or click to keep it open.")
             .overlay(alignment: .topLeading) {
                 if hoveringSidebarToggle {
@@ -394,7 +394,7 @@ private struct PrivacySettingsView: View {
                     } label: {
                         HStack(spacing: 10) {
                             Image(systemName: item.symbol).font(.system(size: 15, weight: .regular)).frame(width: 16, height: 16)
-                            Text(item.rawValue)
+                            Text(QG(item.rawValue))
                             Spacer(minLength: 0)
                         }
                         .padding(.horizontal, 8)
@@ -404,7 +404,7 @@ private struct PrivacySettingsView: View {
                     }
                     .buttonStyle(.plain)
                     .onHover { hoveredPage = $0 ? item : nil }
-                    .accessibilityLabel(item.rawValue)
+                    .accessibilityLabel(QG(item.rawValue))
                     .accessibilityAddTraits(page == item ? [.isSelected] : [])
                 }
             }
@@ -471,7 +471,7 @@ private struct PrivacySettingsView: View {
         section("Protection profile") {
             row("Profile", detail: profileDescription) {
                 HStack(spacing: 8) {
-                    Text(model.currentProfile?.title ?? "Custom").foregroundStyle(SettingsPalette.accent)
+                    Text(QG(model.currentProfile?.title ?? "Custom")).foregroundStyle(SettingsPalette.accent)
                     Image(systemName: "chevron.down").font(.system(size: 10)).foregroundStyle(SettingsPalette.secondary)
                 }
                 .font(.system(size: 13))
@@ -502,7 +502,7 @@ private struct PrivacySettingsView: View {
             if let message = model.loginPreference.message { note(message, warning: true) }
             divider
             row("Check for updates", detail: model.updates.message) {
-                Button(model.updates.checking ? "Checking…" : "Check now") { Task { await model.updates.check() } }
+                Button(QG(model.updates.checking ? "Checking…" : "Check now")) { Task { await model.updates.check() } }
                     .disabled(model.updates.checking)
                 if let page = model.updates.downloadPage { Button("View download") { NSWorkspace.shared.open(page) } }
             }
@@ -690,7 +690,7 @@ private struct PrivacySettingsView: View {
     @ViewBuilder private var instantProtection: some View {
         section("Full-screen privacy") {
             row("Blur every display", detail: "Keep your screen blurred until you clear it. AirPods are not required.") {
-                Button(privacy.instant ? "Clear blur" : "Blur screen now") { model.toggleInstantShield() }
+                Button(QG(privacy.instant ? "Clear blur" : "Blur screen now")) { model.toggleInstantShield() }
             }
             divider
             row("Show blur in recordings", detail: "Include blur in screenshots and recordings of your entire display.") {
@@ -736,10 +736,10 @@ private struct PrivacySettingsView: View {
             }
             ForEach(privacy.protectedAreas) { area in
                 divider
-                row("Area in \(area.window.name)", detail: "Follows the window when it moves or resizes.") {
+                row(QG("Area in %@", area.window.name), detail: "Follows the window when it moves or resizes.") {
                     Button("Remember") { privacy.rememberArea(area) }
                     Button("Remove") { privacy.removeArea(area.id) }
-                        .accessibilityLabel("Remove area in \(area.window.name)")
+                        .accessibilityLabel(QG("Remove area in %@", area.window.name))
                 }
                     .contextMenu { Button("Remove area", role: .destructive) { privacy.removeArea(area.id) } }
             }
@@ -751,7 +751,7 @@ private struct PrivacySettingsView: View {
             }
             ForEach(privacy.savedAreas) { area in
                 divider
-                row("Saved area in \(area.appName)", detail: "Restores when this app opens a window with the same title, including after relaunch.") {
+                row(QG("Saved area in %@", area.appName), detail: "Restores when this app opens a window with the same title, including after relaunch.") {
                     InlineDeleteButton(itemName: "saved area", confirmationHelp: "Forget this area and stop restoring its blur",
                                        isBusy: false, isDeleted: false,
                                        onConfirm: { privacy.removeSavedArea(area.id) }, onFinished: {})
@@ -790,7 +790,7 @@ private struct PrivacySettingsView: View {
                     Toggle("Payment card numbers", isOn: option(.paymentCards)).labelsHidden()
                 }
                 divider
-                row("Custom phrases", detail: privacy.customPhrases.isEmpty ? "Choose words or phrases you want to keep private." : "\(privacy.customPhrases.count) phrases saved on this Mac.") {
+                row("Custom phrases", detail: privacy.customPhrases.isEmpty ? "Choose words or phrases you want to keep private." : QG("%ld phrases saved on this Mac.", privacy.customPhrases.count)) {
                     Button("Edit phrases…") { phraseDraft = privacy.customPhrases.joined(separator: "\n"); editingPhrases = true }
                 }
                 divider
@@ -846,7 +846,7 @@ private struct PrivacySettingsView: View {
     @ViewBuilder private var appRules: some View {
         section("App protection") {
             row("Add the active app", detail: "Choose head sensitivity or automatically blur this app’s windows.") {
-                Button("Add \(privacy.frontAppName)") { privacy.addActiveApp() }
+                Button(QG("Add %@", privacy.frontAppName)) { privacy.addActiveApp() }
                     .disabled(privacy.frontBundleID == nil)
                     .lineLimit(1)
                     .frame(maxWidth: 220)
@@ -866,16 +866,16 @@ private struct PrivacySettingsView: View {
                     row(rule.name) {
                         appRuleSlider(rule)
                         InlineDeleteButton(
-                            itemName: "\(rule.name) rule",
-                            confirmationHelp: "Remove saved app protection and restore standard head tracking for \(rule.name)",
+                            itemName: QG("%@ rule", rule.name),
+                            confirmationHelp: QG("Remove saved app protection and restore standard head tracking for %@", rule.name),
                             isBusy: false,
                             isDeleted: false,
                             onConfirm: { privacy.removeRule(rule.id) },
                             onFinished: {}
                         )
                     }
-                    row("Automatically protect windows", detail: "Blur \(rule.name)’s visible windows whenever they open. Pause protection or press Escape to clear them.") {
-                        Toggle("Automatically protect \(rule.name)", isOn: Binding(
+                    row("Automatically protect windows", detail: QG("Blur %@’s visible windows whenever they open. Pause protection or press Escape to clear them.", rule.name)) {
+                        Toggle(QG("Automatically protect %@", rule.name), isOn: Binding(
                             get: { rule.protectWindows },
                             set: { privacy.setAutomaticWindowProtection(rule.id, enabled: $0) }
                         )).labelsHidden()
@@ -897,13 +897,13 @@ private struct PrivacySettingsView: View {
         )
         return VStack(spacing: 5) {
             PrivacyLevelSlider(value: value, accent: SettingsPalette.accent,
-                               label: "\(rule.name) head blur", valueLabel: rule.mode.title, range: 0...2,
-                               minimumLabel: "Pause head blur for \(rule.name)",
-                               maximumLabel: "Use stronger head blur for \(rule.name)", showsEndpoints: false)
+                               label: QG("%@ head blur", rule.name), valueLabel: rule.mode.title, range: 0...2,
+                               minimumLabel: QG("Pause head blur for %@", rule.name),
+                               maximumLabel: QG("Use stronger head blur for %@", rule.name), showsEndpoints: false)
             HStack {
                 ForEach(Array(modes.enumerated()), id: \.element.id) { index, mode in
                     if index > 0 { Spacer(minLength: 0) }
-                    Text(mode == .pause ? "Paused" : mode.title)
+                    Text(QG(mode == .pause ? "Paused" : mode.title))
                         .foregroundStyle(rule.mode == mode ? SettingsPalette.accent : SettingsPalette.secondary)
                 }
             }
@@ -935,7 +935,7 @@ private struct PrivacySettingsView: View {
             divider
             row(model.enabled ? "Head tracking is on" : "Start head tracking",
                 detail: model.enabled ? model.status : "Look at your screen and hold still to set your normal position.") {
-                Button(model.enabled ? "Pause" : "Start tracking") { model.setEnabled(!model.enabled) }
+                Button(QG(model.enabled ? "Pause" : "Start tracking")) { model.setEnabled(!model.enabled) }
             }
             if model.enabled {
                 divider
@@ -969,11 +969,11 @@ private struct PrivacySettingsView: View {
         section("AirPods") {
             row(model.enabled ? "Head tracking is on" : "Start head tracking",
                 detail: "Connect your AirPods, then face the screen to get ready.") {
-                Button(model.enabled ? "Pause" : "Start tracking") { model.setEnabled(!model.enabled) }
+                Button(QG(model.enabled ? "Pause" : "Start tracking")) { model.setEnabled(!model.enabled) }
             }
             divider
             row("Guided setup", detail: "Check your motion, learn a comfortable range, and try your blur.") {
-                Button(model.hasCompletedHeadSetup ? "Recalibrate…" : "Set up…") { model.onRequestHeadSetup?() }
+                Button(QG(model.hasCompletedHeadSetup ? "Recalibrate…" : "Set up…")) { model.onRequestHeadSetup?() }
                     .disabled(privacy.instant)
             }
         }
@@ -1005,7 +1005,7 @@ private struct PrivacySettingsView: View {
             if let angle = model.suggestedComfort {
                 divider
                 row("Suggested start angle", detail: "Apply this suggestion when it feels right for you.") {
-                    Button("Use \(Int(angle))°") { model.applyCalibration() }
+                    Button(QG("Use %ld°", Int(angle))) { model.applyCalibration() }
                 }
             }
             if let message = model.learningNotice {
@@ -1019,7 +1019,7 @@ private struct PrivacySettingsView: View {
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(title).font(.system(size: 14)).accessibilityAddTraits(.isHeader)
+            Text(QG(title)).font(.system(size: 14)).accessibilityAddTraits(.isHeader)
             VStack(spacing: 0, content: content)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(SettingsPalette.card, in: RoundedRectangle(cornerRadius: 14))
@@ -1028,7 +1028,7 @@ private struct PrivacySettingsView: View {
     }
 
     private func pageHeading(_ title: String) -> some View {
-        Text(title)
+        Text(QG(title))
             .font(.system(size: 24, weight: .regular))
             .accessibilityAddTraits(.isHeader)
     }
@@ -1036,9 +1036,9 @@ private struct PrivacySettingsView: View {
     private func row<Content: View>(_ title: String, detail: String? = nil, @ViewBuilder control: () -> Content) -> some View {
         HStack(spacing: 24) {
             VStack(alignment: .leading, spacing: 5) {
-                Text(title).fixedSize(horizontal: false, vertical: true)
+                Text(QG(title)).fixedSize(horizontal: false, vertical: true)
                 if let detail {
-                    Text(detail)
+                    Text(QG(detail))
                         .font(.system(size: 13))
                         .foregroundStyle(SettingsPalette.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1056,7 +1056,7 @@ private struct PrivacySettingsView: View {
     }
 
     private func note(_ text: String, warning: Bool = false, finePrint: Bool = false) -> some View {
-        Text(text)
+        Text(QG(text))
             .font(.system(size: finePrint ? 11 : 13))
             .foregroundStyle(warning ? Color.orange : finePrint ? Color(white: 0.55) : SettingsPalette.secondary)
             .lineSpacing(finePrint ? 2 : 0)

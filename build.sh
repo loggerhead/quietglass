@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
-swift build -c release
-quietglass_bin_dir="$(swift build -c release --show-bin-path)"
+swift build -c release --build-system native
+quietglass_bin_dir="$(swift build -c release --build-system native --show-bin-path)"
 quietglass_universal="${QUIETGLASS_UNIVERSAL:-0}"
 if [[ "$quietglass_universal" != 0 && "$quietglass_universal" != 1 ]]; then
     printf '%s\n' 'QUIETGLASS_UNIVERSAL must be 0 or 1.' >&2
@@ -55,6 +55,7 @@ cp Resources/Preview/BlurPreview.png "$quietglass_staged_app/Contents/Resources/
 cp Resources/Preview/BlurPreview.mp4 "$quietglass_staged_app/Contents/Resources/BlurPreview.mp4"
 cp Resources/Help.html "$quietglass_staged_app/Contents/Resources/QuietGlass Help.html"
 cp Sources/QuietGlass/Resources/NearbyAlert.mp3 "$quietglass_staged_app/Contents/Resources/NearbyAlert.mp3"
+cp -R Resources/zh-Hans.lproj "$quietglass_staged_app/Contents/Resources/"
 xcrun actool Resources/AppIcon/QuietGlass.icon \
     --compile "$quietglass_staged_app/Contents/Resources" \
     --platform macosx --minimum-deployment-target 14.0 \
