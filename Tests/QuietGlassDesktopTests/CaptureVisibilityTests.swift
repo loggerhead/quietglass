@@ -2,19 +2,20 @@
 
 import AppKit
 import XCTest
+import ShieldCore
 @testable import QuietGlass
 
-final class CaptureVisibilityTests: XCTestCase {
+final class CaptureVisibilityTests: OptInDesktopTestCase {
     @MainActor func testHeadBlurCapturePreferenceAppliesBeforeAndAfterSurfaceCreation() throws {
         _ = NSApplication.shared
-        let overlay = ShieldOverlay()
+        let overlay = ScreenBlurExecutor()
+        var engine = try ProtectionEngine()
         overlay.includeInCaptures = true
-        overlay.reconcileScreens()
+        overlay.apply(engine.send(.tick, at: 0))
         defer {
-            overlay.clear()
-            for surface in overlay.surfaces.values { surface.panel.close() }
+            overlay.shutdown()
         }
-        let surface = try XCTUnwrap(overlay.surfaces.values.first)
+        let surface = try XCTUnwrap(overlay.fullSurfaces.values.first)
         let panel = surface.panel
         XCTAssertEqual(panel.sharingType, .readOnly)
         surface.setImage(try sampleImage())
@@ -23,17 +24,18 @@ final class CaptureVisibilityTests: XCTestCase {
         XCTAssertTrue(surface.hasImage)
         overlay.includeInCaptures = true
         XCTAssertEqual(panel.sharingType, .readOnly)
-        XCTAssertTrue(overlay.surfaces.values.contains { $0.panel === panel })
+        XCTAssertTrue(overlay.fullSurfaces.values.contains { $0.panel === panel })
         XCTAssertTrue(surface.hasImage)
     }
 
     @MainActor func testPrivacyCapturePreferencePreservesExistingBlur() throws {
         _ = NSApplication.shared
-        let privacy = PrivacyController()
+        let privacy = ScreenBlurExecutor()
+        var engine = try ProtectionEngine()
         defer { privacy.shutdown() }
         privacy.includeInCaptures = true
-        privacy.screenParametersChanged()
-        let surface = try XCTUnwrap(privacy.surfaces.values.first)
+        privacy.apply(engine.send(.tick, at: 0))
+        let surface = try XCTUnwrap(privacy.regionSurfaces.values.first)
         let panel = surface.panel
         XCTAssertEqual(panel.sharingType, .readOnly)
         surface.setImage(try sampleImage())
@@ -42,7 +44,7 @@ final class CaptureVisibilityTests: XCTestCase {
         XCTAssertTrue(surface.hasImage)
         privacy.includeInCaptures = true
         XCTAssertEqual(panel.sharingType, .readOnly)
-        XCTAssertTrue(privacy.surfaces.values.contains { $0.panel === panel })
+        XCTAssertTrue(privacy.regionSurfaces.values.contains { $0.panel === panel })
         XCTAssertTrue(surface.hasImage)
     }
 

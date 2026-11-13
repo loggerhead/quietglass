@@ -11,9 +11,29 @@ final class FocusWindowTests: XCTestCase {
     private let background = CGRect(x: 660, y: 160, width: 400, height: 500)
 
     private func window(_ frame: CGRect, pid: pid_t, layer: Int = 0, alpha: Double = 1) -> [String: Any] {
-        [kCGWindowOwnerPID as String: NSNumber(value: pid), kCGWindowLayer as String: layer,
+        [kCGWindowNumber as String: NSNumber(value: abs(pid)), kCGWindowOwnerPID as String: NSNumber(value: pid), kCGWindowLayer as String: layer,
          kCGWindowAlpha as String: alpha,
          kCGWindowBounds as String: CGRect(x: frame.minX, y: screen.maxY - frame.maxY, width: frame.width, height: frame.height).dictionaryRepresentation]
+    }
+
+    private func automaticRegions(in items: [[String: Any]], rules: [AppPrivacyRule], savedAreas: [SavedWindowArea],
+                                  bundleIdentifiers: [pid_t: String], appPID: pid_t, desktopTop: CGFloat) -> [CGRect] {
+        let appRules = rules.filter(\.protectWindows).map { app in
+            ProtectionRule(name: app.name, trigger: .appEvent(bundleID: app.bundleID, event: .windowOpened),
+                           scope: .window(ProtectedWindowRef(bundleID: app.bundleID)))
+        }
+        let areas = savedAreas.map { area in
+            ProtectionRule(name: area.appName, trigger: .windowTitle(bundleID: area.bundleID, titleDigest: area.titleDigest),
+                scope: .region(ProtectedWindowRef(bundleID: area.bundleID, titleDigest: area.titleDigest), normalizedRect: area.rectangle, persistence: .rememberWindowTitle))
+        }
+        do {
+            var engine = try ProtectionEngine(rules: appRules + areas)
+            let windows = RuleEventSources.windows(in: items, bundleIdentifiers: bundleIdentifiers, appPID: appPID, desktopTop: desktopTop)
+            let frame = windows.reduce(screen) { $0.union($1.frame) }
+            engine.send(.displays([ProtectionDisplay(id: 1, frame: frame)]), at: 0)
+            engine.send(.permission(.screen, granted: true), at: 0); engine.send(.escapeAvailability(true), at: 0)
+            return engine.send(.windows(windows, activeWindow: nil, activeBundleID: nil), at: 0).displays.flatMap { $0.regions.map(\.rectangle) }
+        } catch { XCTFail("Rule geometry evaluation failed: \(error)"); return [] }
     }
 
     func testSettingsBehindOtherAppsCannotKeepTheirBackgroundWindowsClear() {
@@ -67,7 +87,7 @@ final class FocusWindowTests: XCTestCase {
         let items = [window(screen, pid: 5, layer: 24), window(background, pid: 3)]
         let content = PrivacyController.contentWindowItems(in: items,
             bundleIdentifiers: [5: "com.apple.screencaptureui"], displayFrames: [screen])
-        let regions = PrivacyController.automaticRegions(in: content,
+        let regions = automaticRegions(in: content,
             rules: [AppPrivacyRule(bundleID: "example.private", name: "Private", protectWindows: true)],
             savedAreas: [], bundleIdentifiers: [3: "example.private"], appPID: 1, desktopTop: screen.maxY)
         XCTAssertEqual(regions, [background], "The transparent recording canvas must not uncover the protected document")
@@ -106,13 +126,13 @@ final class FocusWindowTests: XCTestCase {
 
     func testAutomaticAppProtectionRespectsForegroundWindowsAndSettings() {
         let items = [window(active, pid: 2), window(background, pid: 3), window(settings, pid: 1)]
-        let regions = PrivacyController.automaticRegions(in: items,
+        let regions = automaticRegions(in: items,
             rules: [AppPrivacyRule(bundleID: "example.private", name: "Private", protectWindows: true)], savedAreas: [],
             bundleIdentifiers: [2: "example.public", 3: "example.private"], appPID: 1, desktopTop: screen.maxY)
         XCTAssertEqual(regions, [background])
         XCTAssertFalse(regions.contains { $0.contains(CGPoint(x: active.midX, y: active.midY)) })
         let coveredItems = [window(settings, pid: 1), window(background, pid: 3)]
-        XCTAssertTrue(PrivacyController.automaticRegions(in: coveredItems,
+        XCTAssertTrue(automaticRegions(in: coveredItems,
             rules: [AppPrivacyRule(bundleID: "example.private", name: "Private", protectWindows: true)], savedAreas: [],
             bundleIdentifiers: [3: "example.private"], appPID: 1, desktopTop: screen.maxY).isEmpty)
     }
@@ -123,11 +143,11 @@ final class FocusWindowTests: XCTestCase {
         for frame in [background, CGRect(x: -1600, y: 100, width: 1200, height: 700)] {
             var item = window(frame, pid: 3)
             item[kCGWindowName as String] = "A document"
-            let regions = PrivacyController.automaticRegions(in: [item], rules: [], savedAreas: [saved],
+            let regions = automaticRegions(in: [item], rules: [], savedAreas: [saved],
                 bundleIdentifiers: [3: "example.private"], appPID: 1, desktopTop: screen.maxY)
             XCTAssertEqual(regions, [ScreenRegions.fromVision(normalized, in: frame)])
             item[kCGWindowName as String] = "Different document"
-            XCTAssertTrue(PrivacyController.automaticRegions(in: [item], rules: [], savedAreas: [saved],
+            XCTAssertTrue(automaticRegions(in: [item], rules: [], savedAreas: [saved],
                 bundleIdentifiers: [3: "example.private"], appPID: 1, desktopTop: screen.maxY).isEmpty)
         }
     }

@@ -1,5 +1,6 @@
 import AppKit
 import ServiceManagement
+import ShieldCore
 
 @MainActor
 final class LoginPreference: ObservableObject {
@@ -45,10 +46,12 @@ final class AppUpdates: ObservableObject {
     @Published private(set) var message = "Check for a newer public release."
     @Published private(set) var downloadPage: URL?
     @Published var automatic: Bool {
-        didSet { preferences.set(automatic, forKey: "automaticUpdateChecks"); configureTimer(); checkIfDue() }
+        didSet { if !loadingPreferences { writePreference("automaticUpdateChecks", automatic) }; configureTimer(); if !loadingPreferences { checkIfDue() } }
     }
     private var timer: Timer?
-    private let preferences: UserDefaults
+    private var loadingPreferences = false
+    private var readPreference: (String) -> Any?
+    private var writePreference: (String, Any) -> Void
     private let currentVersion: String
     private let fetch: (URLRequest) async throws -> (Data, Int)
     init(preferences: UserDefaults = .standard,
@@ -62,9 +65,32 @@ final class AppUpdates: ObservableObject {
              let (data, response) = try await session.data(for: request)
              return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
          }) {
-        self.preferences = preferences; self.currentVersion = currentVersion; self.fetch = fetch
-        automatic = preferences.bool(forKey: "automaticUpdateChecks")
+        let store = ProtectionStore(storage: preferences)
+        self.readPreference = { key in
+            guard let document = try? store.loadOrMigrate(),
+                  let values = try? PropertyListSerialization.propertyList(from: document.preferences.appearance, format: nil) as? [String: Any] else { return nil }
+            return values[key]
+        }
+        self.writePreference = { key, value in
+            guard var document = try? store.loadOrMigrate() else { return }
+            var values = (try? PropertyListSerialization.propertyList(from: document.preferences.appearance, format: nil)) as? [String: Any] ?? [:]
+            values[key] = value
+            guard let appearance = try? PropertyListSerialization.data(fromPropertyList: values, format: .binary, options: 0) else { return }
+            document.preferences.appearance = appearance
+            try? store.save(document)
+        }
+        self.currentVersion = currentVersion; self.fetch = fetch
+        automatic = readPreference("automaticUpdateChecks") as? Bool ?? false
         configureTimer()
+    }
+    func useProtectionPreferences(read: @escaping (String) -> Any?, write: @escaping (String, Any) -> Void) {
+        readPreference = read; writePreference = write
+        refreshPreferences()
+    }
+    func refreshPreferences() {
+        loadingPreferences = true
+        automatic = readPreference("automaticUpdateChecks") as? Bool ?? false
+        loadingPreferences = false
     }
     private func configureTimer() {
         timer?.invalidate(); timer = nil
@@ -74,13 +100,13 @@ final class AppUpdates: ObservableObject {
     }
     func shutdown() { timer?.invalidate(); timer = nil }
     func checkIfDue() {
-        guard automatic, Date().timeIntervalSince(preferences.object(forKey: "lastUpdateCheck") as? Date ?? .distantPast) >= 86_400 else { return }
+        guard automatic, Date().timeIntervalSince(readPreference("lastUpdateCheck") as? Date ?? .distantPast) >= 86_400 else { return }
         Task { await check() }
     }
     func check() async {
         guard !checking else { return }
         checking = true; downloadPage = nil; message = "Checking for updates…"
-        preferences.set(Date(), forKey: "lastUpdateCheck")
+        writePreference("lastUpdateCheck", Date())
         defer { checking = false }
         var request = URLRequest(url: URL(string: "https://api.github.com/repos/clintonimaroo/quietglass/releases/latest")!)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -97,7 +123,7 @@ final class AppUpdates: ObservableObject {
                   url.path.hasPrefix("/clintonimaroo/quietglass/releases/tag/") else {
                 message = "The release information could not be verified."; return
             }
-            preferences.set(Date(), forKey: "lastUpdateCheck")
+            writePreference("lastUpdateCheck", Date())
             if latest > current { downloadPage = url; message = QG("QuietGlass %@ is available.", release.tag_name) }
             else { message = "You have the newest available version." }
         } catch { message = "Could not check for updates. Check your connection and try again." }

@@ -101,5 +101,5 @@ public struct GlassTransition {
         return value
     }
 
-    public mutating func reset() { value = 0; velocity = 0 }
+    public mutating func reset(to value: Double = 0) { self.value = value.isFinite ? max(0, min(1, value)) : 1; velocity = 0 }
 }

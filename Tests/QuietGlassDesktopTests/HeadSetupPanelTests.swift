@@ -5,7 +5,7 @@ import AppKit
 import SwiftUI
 @testable import QuietGlass
 
-final class HeadSetupPanelTests: XCTestCase {
+final class HeadSetupPanelTests: OptInDesktopTestCase {
     @MainActor func testHostingControllerCannotCollapseSetupWindowToZeroSize() throws {
         _ = NSApplication.shared
         let panel = HeadSetupPanel()

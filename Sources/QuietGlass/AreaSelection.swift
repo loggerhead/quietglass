@@ -1,6 +1,12 @@
 //  Created by Clinton Imaro on 20/09/2026.
 
 import AppKit
+import ShieldCore
+
+struct SelectedDisplayRegion: Equatable {
+    let displayID: UInt32
+    let normalizedRect: CGRect
+}
 
 final class AreaSelectionPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -9,39 +15,61 @@ final class AreaSelectionPanel: NSPanel {
 
 @MainActor
 final class AreaSelectionController {
-    private var panel: AreaSelectionPanel?
+    private var panels: [AreaSelectionPanel] = []
     private var observer: NSObjectProtocol?
+    private weak var returnWindow: NSWindow?
 
     func show(frame: CGRect, selected: @escaping (CGRect) -> Void) {
         close()
+        addPanel(frame: frame) { area in if let area { selected(area) } }
+        observeSpaces()
+    }
+
+    func show(displays: [ProtectionDisplay], selected: @escaping (SelectedDisplayRegion) -> Void) {
+        close()
+        returnWindow = NSApp.keyWindow
+        for display in displays {
+            addPanel(frame: display.frame) { area in
+                if let area { selected(SelectedDisplayRegion(displayID: display.id, normalizedRect: area)) }
+            }
+        }
+        observeSpaces()
+    }
+
+    private func addPanel(frame: CGRect, complete: @escaping (CGRect?) -> Void) {
         let panel = AreaSelectionPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.title = QG("Choose a protected area")
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 6)
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.isFloatingPanel = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .canJoinAllApplications]
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         let view = AreaSelectionView(frame: CGRect(origin: .zero, size: frame.size))
         view.complete = { [weak self] area in
             self?.close()
-            if let area { selected(area) }
+            complete(area)
         }
         panel.contentView = view
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(view)
-        self.panel = panel
+        panels.append(panel)
+    }
+
+    private func observeSpaces() {
         observer = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.close() }
         }
     }
 
     func close() {
-        panel?.orderOut(nil)
-        panel?.close()
-        panel = nil
+        for panel in panels { panel.orderOut(nil); panel.close() }
+        panels = []
         if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
         observer = nil
+        if let returnWindow, returnWindow.isVisible { returnWindow.makeKeyAndOrderFront(nil) }
+        returnWindow = nil
     }
 }
 
@@ -50,6 +78,8 @@ private final class AreaSelectionView: NSView {
     private var start: CGPoint?
     private var selection = CGRect.zero
     override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .crosshair) }
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.withAlphaComponent(0.32).setFill()

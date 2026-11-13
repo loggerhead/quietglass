@@ -27,11 +27,19 @@ final class ProtectionCheck: ObservableObject {
     private var demoStart: TimeInterval?
     private var demoResponse = NearbyResponse.warning
     private var began = false
+    private let pictureInPicture: CameraPictureInPicture
+
+    func openPictureInPicture(cameraID: String) {
+        close()
+        pictureInPicture.show(cameraID: cameraID)
+    }
 
     init(access: @escaping () async -> Bool = NearbyPeople.requestCameraAccess,
          makeCamera: @escaping (@escaping (Result<NearbyFaceSample, NearbyCameraFailure>) -> Void) -> NearbyCameraSession = { FaceCamera(completion: $0) },
-         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         pictureInPicture: CameraPictureInPicture? = nil) {
         self.access = access; self.makeCamera = makeCamera; self.clock = clock
+        self.pictureInPicture = pictureInPicture ?? CameraPictureInPicture()
     }
 
     private func begin() {
@@ -145,6 +153,14 @@ struct ProtectionCheckView: View {
             header
             VStack(spacing: 12) {
                 cameraStage
+                HStack(spacing: 12) {
+                    Button {
+                        check.openPictureInPicture(cameraID: cameraID)
+                        dismiss()
+                    } label: { Label(QG("Picture in Picture"), systemImage: "pip") }
+                    Text(QG("Keep the camera visible while using other apps."))
+                        .font(.system(size: 11)).foregroundStyle(secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading)
                 if check.running {
                     HStack(spacing: 8) {
                         result("You", number: "1", observed: check.sawCenter)

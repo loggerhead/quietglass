@@ -17,34 +17,54 @@
 <h1>QuietGlass</h1>
 <p class="intro">Privacy for what’s on your Mac.</p>
 <p>QuietGlass lives in your menu bar. Open Settings from its menu bar icon, or hover over the floating control bar to reveal its controls. Closing Settings keeps protection running.</p>
-<h2>Start with one feature</h2>
+<h2>Screen controls, Auto &amp; shortcuts, and Settings</h2>
+<p>In a manual or nearby-face rule, Scope → Select region lets you drag a screenshot-style rectangle on any display. Set the optional shortcut to the right of the button to select after switching screens. A dashed outline and caption mark the selected region during editing. Escape cancels selection; Save rule commits the selected display and region. Window regions remain a separate option for following a matching window.</p>
+<p><strong>Screen controls</strong> shows the rules currently protecting each display, their names, IDs, and reasons. Use Blur screen now, Select an area, Protect a window, or Focus to activate or create a manual rule. Pause and Resume apply globally. <kbd>Escape</kbd> clears protection and stops camera monitoring; AirPods protection can rearm after you face center.</p>
+<p><strong>Auto &amp; shortcuts</strong> shows all saved setups in one compact list, with badges for manual actions and automatic triggers. Start with Someone nearby, Look away, Sensitive information, or Focus. Edit a rule through When → Where → Response, then expand Extra requirements for app restrictions, allowed hours, priority, calibration, and identity checks. Access and pause checks have their own advanced section. Repeated preset clicks enable and highlight the same setup while retaining your edits. Save is available only for a valid combination.</p>
+<p><strong>Settings</strong> contains general and appearance defaults, recenter shortcuts, permissions and calibration, saved face setup, and updates. Manual rule shortcuts are edited with their rules. Closing the workspace keeps protection running.</p>
+<h2>Choose a rule</h2>
 <ul>
-  <li><strong>Instant privacy.</strong> Press <kbd>⌃⌥⌘P</kbd> to blur every display. Press it again to clear, or hold <kbd>⌃⌥⌘Space</kbd> to peek.</li>
-  <li><strong>Look-away protection.</strong> In <strong>Settings → Head tracking</strong>, choose <strong>Camera</strong> or <strong>AirPods</strong> and start tracking. Camera mode calibrates from one steady face, filters brief glances, and protects after sustained tracking loss. Recalibrate when your position changes. Camera mode covers all displays together.</li>
-  <li><strong>Window or area protection.</strong> Use the app you want to protect, then open <strong>Settings → Protection</strong> and choose <strong>Protect active window</strong> or <strong>Choose area…</strong>.</li>
-  <li><strong>Focus mode.</strong> Choose the <strong>Focus</strong> profile, then return to your work. The active window stays clear while surrounding content blurs. Select a different profile or press Escape to clear it.</li>
-  <li><strong>Nearby people.</strong> In <strong>Settings → Protection</strong>, enable <strong>Detect additional faces</strong>. <strong>Warn me</strong> shows a warning for 2 minutes, then blurs if it is unresolved. Edit <strong>Blur after</strong> with the pencil and checkmark to save your preferred hours and minutes. Clearing the alert cancels its timer; Escape stops monitoring. <strong>Blur automatically</strong> skips the delay. A short sound plays once when the notch warning appears; turn off <strong>Play warning sound</strong> for silent alerts. AirPods are not required. <strong>Facing screen</strong> filters brief and side-facing background faces; <strong>Any extra face</strong> uses face count. Head direction is not eye gaze.</li>
-  <li><strong>Recognize me.</strong> Choose <strong>Set up my face</strong>, authenticate, and follow the camera prompts. Save your face, enable detection, and complete the short verification when prompted. To remove your saved template, click the trash button, confirm with the pink checkmark, and authenticate.</li>
-  <li><strong>Check camera coverage.</strong> Choose a camera in Nearby people, click <strong>Run check</strong>, then <strong>Start camera</strong>. Stay centered and ask someone to enter each side of the preview. Faces must be inside the camera’s view. Try your response with a short demonstration; your regular delay is unchanged. Monitoring resumes when you finish.</li>
-  <li><strong>Act on a warning.</strong> Click the notch notice to open Nearby people settings, where you can use <strong>Blur now</strong>, <strong>Pause 5 min</strong>, or <strong>Resume</strong>. A timed pause stops Nearby people monitoring and shows when it will restart; camera head tracking can continue independently. Escape cancels automatic resume.</li>
-  <li><strong>Remember protection.</strong> Enable <strong>Automatically protect windows</strong> in an app rule, or click <strong>Remember</strong> beside a selected area. Saved areas return for the same app and window title and follow its size. Pause protection or Escape clears coverage without deleting saved rules.</li>
-  <li><strong>Everyday use.</strong> General settings include optional <strong>Launch at login</strong> and update checking. <strong>Check for Updates…</strong> checks GitHub for a public release and offers its download page. Quit QuietGlass before replacing it in Applications. Installation is manual.</li>
+  <li><strong>Immediate privacy:</strong> use Blur screen now or <kbd>⌃⌥⌘P</kbd>. Hold <kbd>⌃⌥⌘Space</kbd> to peek through the default manual blur; other active rules remain effective.</li>
+  <li><strong>Look away:</strong> choose Camera or AirPods in the rule's trigger. Calibrate in Settings → Permissions and calibration. Rules may use different angles, blur strengths, and display scopes.</li>
+  <li><strong>Someone nearby:</strong> choose Facing screen or Any extra face. Warn, then blur uses your delay; Warn only requires Blur now to upgrade it. Blur responds as soon as detection is confirmed. Detection modes share the camera.</li>
+  <li><strong>Window or region:</strong> protect a selected window or draw an area. Remember matching window titles restores a region using a local title digest. The title text is not saved.</li>
+  <li><strong>Sensitive information:</strong> choose supported text types and custom phrases. Only locally detected matching text is blurred.</li>
+  <li><strong>Application conditions:</strong> protect matching windows when an application is active or its windows are open. A pause action can pause head-turn rules only.</li>
+  <li><strong>Focus:</strong> keep the active window clear while blurring surrounding content. Head-turn rules pause while Focus is active.</li>
+  <li><strong>Owner verification:</strong> enroll your face in Settings, then add this condition to the nearby rules that require it. Missing or unverified face data keeps those rules protected. Deleting a face template does not remove their verification conditions.</li>
 </ul>
-<p><kbd>Escape</kbd> clears protection and turns camera monitoring off. Enable detection again when you want it to resume.</p>
+<h2>Existing settings</h2>
+<p>Your previous configuration becomes a versioned local rule document. Migration keeps the original preferences and a backup, and does not duplicate rules on later launches. If migration cannot finish, your saved data remains unchanged; restart to retry.</p>
 <h2>Permissions</h2>
 <p>Allow <strong>Screen Recording</strong> for blur and local text detection, <strong>Motion &amp; Fitness</strong> for AirPods tracking, and <strong>Camera</strong> for camera head tracking, Nearby people, or face setup. QuietGlass does not use your microphone. Owner face setup and access require Touch ID or your Mac password.</p>
 <h2>If something needs attention</h2>
 <ul>
   <li><strong>Blur does not appear:</strong> check QuietGlass in <strong>System Settings → Privacy &amp; Security → Screen Recording</strong> (called Screen &amp; System Audio Recording on some macOS versions). Quit and reopen QuietGlass if macOS requests it.</li>
-  <li><strong>Head tracking feels off:</strong> face your screen and use <strong>Center My Gaze</strong>. Recalibrate after reconnecting AirPods or changing where you sit.</li>
-  <li><strong>Camera is unavailable:</strong> check Camera permission, close another app using that camera if necessary, and choose <strong>Retry</strong> in Nearby people settings.</li>
+  <li><strong>Head tracking feels off:</strong> face your screen and use <strong>Recenter</strong> in Settings → Permissions and calibration. Recalibrate after reconnecting AirPods or changing where you sit.</li>
+  <li><strong>Camera is unavailable:</strong> check Camera permission, close another app using that camera if necessary, and retry camera access from Settings → Permissions and calibration.</li>
   <li><strong>A face prompt does not advance:</strong> sit alone in even light, keep your face visible, and turn your head slightly in the requested direction. Turn with your head, not just your eyes. If needed, cancel and use <strong>Set up again</strong>.</li>
   <li><strong>Detection is off:</strong> your choice is remembered, including when Escape turns it off. Monitoring pauses while the Mac is asleep or inactive and resumes when you return.</li>
 </ul>
+<p>Configurable shortcuts start empty. This update also clears previously saved bindings once; new assignments persist. Escape remains available to clear protection. Settings retains the default blur sample preview. Screen Recording and Camera show a red dot when access is missing; enabling a setup that needs access guides you to grant it. The notch automatic switch changes only currently active automatic setups.</p>
+<p>Permission indicators name the unavailable access. Requirements and access shows current Screen Recording and Camera authorization with explicit status marks. QuietGlass refreshes these when you return from System Settings. If access is granted but the capture session is rejected, use Restart QuietGlass instead of granting the same permission again.</p>
+<p>Every launch checks Screen Recording through ScreenCaptureKit as well as the system preflight, and checks Camera authorization again. While the screen check runs, the app shows Checking access. Successful ScreenCaptureKit verification is valid only for that process; it is never copied into a later launch. A failed or timed-out service check offers Check again instead of calling it a denied permission.</p>
 <h2>Privacy and screen visibility</h2>
 <p>Screen content, recognized text, camera frames, and AirPods motion are processed on your Mac. Photos and video are not saved or uploaded. Optional face recognition stores a template in the encrypted macOS login Keychain.</p>
 <p>Detection covers faces visible to the camera. Poor light, glasses, and an obstructed face can affect recognition; photos or video may fool it. Screen blur does not lock your Mac or make a clear screen visible only to you. Lock your Mac when you leave it unattended.</p>
 <p>To include blur in a recording, enable <strong>Show blur in recordings</strong> and record the entire display. Capturing an individual app window can bypass the overlay. macOS Space and full-screen transitions can briefly interrupt the overlay.</p>
+<h2 lang="zh-Hans">规则使用指南</h2>
+<p>手动或附近人脸规则的“范围 → 选择区域”支持像截图一样，在任意显示器上拖拽框选。可在按钮右侧设置快捷键，切换到其他屏幕后按该键开始框选。编辑时，所选区域会显示虚线边框与说明。Escape 取消选择，“保存方案”才会保存所选显示器和区域。需要区域跟随窗口时，仍可使用“窗口区域”。</p>
+<div lang="zh-Hans">
+<p><strong>手动遮挡与状态</strong>显示生效规则的名称、ID、原因与显示器覆盖范围。立即模糊、框选区域、保护窗口和专注会启用或创建手动规则。暂停与恢复作用于全部保护，Escape 清除保护并停止摄像头监测。</p>
+<p>转头离开规则可选择摄像头或 AirPods，在设置 → 权限与校准中校准。不同规则可分别设置起始角度、过渡角度、模糊强度和显示器范围。AirPods 在清除后面向中心即可重新启用保护；摄像头、文本和应用规则需显式恢复。</p>
+<p><strong>自动检测与快捷键</strong>将所有已保存方案放在同一紧凑列表中，以标签标明手动操作或自动触发类型。使用有人靠近、转头离开、敏感信息或专注预设，再按何时保护 → 保护哪里 → 如何保护编辑。附加运行要求可限制前台应用与运行时段，并说明优先级；权限与暂停检查单独收在高级选项中。重复点击模板会启用并定位到同一方案，保留已有修改。仅合法组合可保存。</p>
+<p><strong>设置</strong>提供外观、配置方案默认值、快捷键、权限与校准、人脸录入和更新。手动规则快捷键在对应规则中编辑。按住临时查看仅移除此手动规则的覆盖；其他规则继续保护。</p>
+<p>附近人脸触发条件可选择面向屏幕或任何额外人脸，各检测模式共享摄像头。窗口或区域规则保护所选窗口或框选区域；敏感信息规则仅模糊本地匹配文本，可选择类型和自定义短语。应用事件规则在应用进入前台或匹配窗口打开时保护窗口，也可仅暂停转头规则。</p>
+<p>附近人脸规则可选择先警告再模糊、仅警告或立即模糊。仅警告不会自动升级，可用立即模糊升级。专注保留当前窗口清晰，并暂停转头规则。保存的区域通过窗口标题摘要匹配，不保存标题文本。</p>
+<p>权限提示会标明具体缺少的权限。“运行要求与权限”显示屏幕录制、摄像头的实时授权状态。返回应用时会重新检查权限；已授权但捕获会话被拒绝时，请使用“重启 QuietGlass”，无需重复授权。</p>
+<p>所有可配置快捷键默认留空，本次更新也会一次性清空旧快捷键，之后你重新设置的快捷键会保留。Escape 仍用于清除保护。“默认模糊强度”保留效果预览；屏幕录制、摄像头缺少权限时显示红点，启用需要该权限的方案时会引导授权。刘海栏“自动检测”只切换当前生效的自动方案，其他方案开关保持不变。</p>
+<p>原有配置自动迁移为本地规则，并保留原始配置与备份。迁移不会重复生成规则，失败时保留数据供重试。人脸模板保存在钥匙串中，摄像头画面与识别文本不会保存。删除模板不会移除规则的主人验证条件。</p>
+</div>
 <h2>Updates and support</h2>
 <p>Choose <strong>Downloads &amp; Updates…</strong> from the QuietGlass menu for new releases. Quit QuietGlass before replacing it in Applications; your settings stay on this Mac. Updates are installed manually.</p>
 <p><a href="https://github.com/clintonimaroo/quietglass/releases/latest">Download the latest version</a> · <a href="https://github.com/clintonimaroo/quietglass/issues">Report an issue</a> · <a href="https://github.com/clintonimaroo/quietglass/blob/main/SECURITY.md">Security reports</a></p>

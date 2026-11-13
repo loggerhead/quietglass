@@ -81,14 +81,15 @@ public enum NotchDocking {
         }
     }
 
-    public static func frame(anchor: CGPoint, vertical: Bool, expanded: Bool) -> CGRect {
+    public static func frame(anchor: CGPoint, vertical: Bool, expanded: Bool, controlCount: Int = 4) -> CGRect {
         if !expanded {
             return CGRect(x: anchor.x - (vertical ? 15 : 26), y: anchor.y - (vertical ? 26 : 15),
                           width: vertical ? 30 : 52, height: vertical ? 52 : 30)
         }
+        let length = CGFloat(48 + 34 * (max(1, controlCount) - 1))
         return vertical
-            ? CGRect(x: anchor.x - 15, y: anchor.y - 126, width: 30, height: 150)
-            : CGRect(x: anchor.x - 24, y: anchor.y - 15, width: 150, height: 30)
+            ? CGRect(x: anchor.x - 15, y: anchor.y - (length - 24), width: 30, height: length)
+            : CGRect(x: anchor.x - 24, y: anchor.y - 15, width: length, height: 30)
     }
 
     public static func constrain(_ anchor: CGPoint, in screen: CGRect, vertical: Bool) -> CGPoint {

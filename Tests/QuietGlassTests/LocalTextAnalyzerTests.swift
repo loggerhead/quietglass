@@ -30,5 +30,13 @@ final class LocalTextAnalyzerTests: XCTestCase {
         XCTAssertLessThan(region.width, 0.7)
         XCTAssertTrue(CGRect(x: 0, y: 0, width: 1, height: 1).contains(region))
         XCTAssertTrue(LocalTextAnalyzer.regions(in: observations, options: .credentials).isEmpty)
+        let email = ProtectionRule(name: "Email", trigger: .sensitiveText(types: [.emailAddresses], phrases: []), scope: .detectedText)
+        let phrase = ProtectionRule(name: "Phrase", trigger: .sensitiveText(types: [], phrases: ["Ordinary text"]), scope: .detectedText)
+        let credentials = ProtectionRule(name: "Credentials", trigger: .sensitiveText(types: [.credentials], phrases: []), scope: .detectedText)
+        let byRule = LocalTextAnalyzer.regions(in: observations, rules: [email, phrase, credentials])
+        XCTAssertEqual(byRule[email.id]?.count, 1)
+        XCTAssertEqual(byRule[phrase.id]?.count, 1)
+        XCTAssertEqual(byRule[credentials.id]?.count, 0)
+        XCTAssertGreaterThan(byRule[email.id]![0].minY, byRule[phrase.id]![0].minY)
     }
 }

@@ -1,16 +1,35 @@
 // Clinton Imaro was here 20/09/2026.
 
 import AppKit
+import AVFoundation
 import Carbon
 import Combine
 import CoreMotion
+import ScreenCaptureKit
 import ShieldCore
 import simd
 
 @MainActor
 final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelegate {
+    @Published private(set) var protectionCoordinator: ProtectionCoordinator?
+    private let ruleExecutor: ScreenBlurExecutor
+    private let screenAccess: () -> Bool
+    private let cameraPermission: () -> Bool
+    private var syncingRules = false
+    private var shuttingDown = false
+    @Published private(set) var rulePermissions = RulePermissionState()
+    private let startsPermissionSensors: Bool
+    private let screenPermissionVerifier = ScreenPermissionVerifier()
+    private let previewRuleID = UUID()
+    private let ruleRegionSelector = AreaSelectionController()
+    private let ruleRegionMarker = RuleRegionMarker()
+    var presentRuleRegionSelection: ((@escaping (SelectedDisplayRegion) -> Void) -> Void)?
+    var requestRulePermission: ((PermissionKind) -> Void)?
+    private var requestedRulePermissions: Set<PermissionKind> = []
+    private var ruleObservation: AnyCancellable?
+    private var nearbyRuleAdapter: NearbyRuleAdapter?
     @Published private(set) var trackingSource: HeadTrackingSource
-    let cameraTracking = CameraHeadTracking()
+    let cameraTracking: CameraHeadTracking
     private var cameraPauses: Set<NearbyPauseReason> = []
     private var protectCameraOnResume = false
     @Published private(set) var enabled = false
@@ -21,25 +40,51 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
     @Published private(set) var status = "Ready when you are"
     @Published private(set) var detail = "Connect your AirPods to this Mac, then start head tracking."
     @Published private(set) var captureNotice: String?
-    @Published private(set) var screenPermission = CGPreflightScreenCaptureAccess()
+    var screenPermission: Bool { rulePermissions.screenGranted }
+    var screenCaptureNeedsRestart: Bool { rulePermissions.needsCaptureRestart }
     @Published private(set) var restarting = false
     @Published private(set) var previewing = false
-    @Published private(set) var shortcutError: String?
-    @Published private(set) var areaShortcutError: String?
-    let areaShortcutLabel = "⌃⌥⌘A"
-    @Published var recordingShortcut = false
+    @Published private(set) var shortcutNotice: String?
+    @Published var recordingRuleShortcut = false {
+        didSet {
+            if recordingRuleShortcut { shortcuts.suspendRuleRecording() }
+            else { protectionCoordinator?.send(.tick) }
+        }
+    }
     @Published var demoMode: Bool {
         didSet {
-            UserDefaults.standard.set(demoMode, forKey: "includeBlurInCaptures")
-            overlay.includeInCaptures = demoMode
-            privacy.includeInCaptures = demoMode
+            saveAppearance("includeBlurInCaptures", demoMode)
+            ruleExecutor.includeInCaptures = demoMode
         }
     }
     @Published var comfort: Double { didSet { save("comfort", comfort); refreshResponse() } }
     @Published var transition: Double { didSet { save("transition", transition); refreshResponse() } }
-    @Published var blur: Double { didSet { save("blur", blur); privacy.blurRadius = blur } }
-    @Published private(set) var shortcutLabel: String
-    @Published private(set) var privacyShortcutError: String?
+    @Published var blur: Double { didSet { save("blur", blur) } }
+    var areaShortcutLabel: String {
+        let rule = protectionCoordinator?.document.rules.first { rule in
+            if case .manual = rule.trigger, case .region(let ref, _, _) = rule.scope { return ref.bundleID == "$selection" }; return false
+        }
+        if case .manual(let shortcut) = rule?.trigger { return shortcut?.label ?? "" }; return ""
+    }
+    func beginRuleRegionSelection(action: @escaping () -> Void) -> ShortcutBinding? {
+        let configured = protectionCoordinator?.document.preferences.regionSelectionShortcut ?? protectionCoordinator?.document.rules.compactMap { rule -> ShortcutBinding? in
+            guard case .manual(let shortcut) = rule.trigger, case .region(let ref, _, _) = rule.scope,
+                  ref.bundleID == "$selection" else { return nil }
+            return shortcut
+        }.first
+        return shortcuts.beginRegionSelection(configured.map { [$0] } ?? [], action: action)
+    }
+    func chooseRuleRegion(selected: @escaping (SelectedDisplayRegion) -> Void) {
+        let complete: (SelectedDisplayRegion) -> Void = { [weak self] value in self?.ruleRegionMarker.show(value); selected(value) }
+        if let presentRuleRegionSelection { presentRuleRegionSelection(complete); return }
+        let displays = NSScreen.screens.compactMap { screen -> ProtectionDisplay? in
+            guard let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value else { return nil }
+            return ProtectionDisplay(id: id, frame: screen.frame)
+        }
+        ruleRegionSelector.show(displays: displays, selected: complete)
+    }
+    func showRuleRegionMarker(_ selection: SelectedDisplayRegion?) { ruleRegionMarker.show(selection) }
+    func endRuleRegionSelection() { shortcuts.endRegionSelection(); ruleRegionSelector.close() }
     @Published private(set) var learning = false
     @Published private(set) var learningProgress = 0.0
     @Published private(set) var suggestedComfort: Double?
@@ -52,29 +97,33 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
     @Published private(set) var displayCalibrationIDs = Set<UInt32>()
     @Published private(set) var displayCalibrationNotice: String?
     private var displayTracking = DisplayHeadTracking()
+    private var ruleHeadResponses: [UUID: ShieldResponse] = [:]
+    private var ruleDisplayTracking: [UUID: DisplayHeadTracking] = [:]
+    private var ruleDisplayCenters: [UUID: [UInt32: simd_quatd]] = [:]
     private var displayCalibrationTask: Task<Void, Never>?
     private var displayLayout: [UInt32: CGRect] = [:]
 
     let privacy = PrivacyController()
-    let nearby = NearbyPeople()
+    let nearby: NearbyPeople
     let protectionCheck = ProtectionCheck()
     let loginPreference = LoginPreference()
-    let updates = AppUpdates()
+    let updates: AppUpdates
     private var maintenanceObservations: [AnyCancellable] = []
     private var protectionCheckObservation: AnyCancellable?
     private var nearbyObservation: AnyCancellable?
     var onOpenPrivacySettings: (() -> Void)?
-    var onOpenControls: (() -> Void)?
-    var onOpenProfileSettings: (() -> Void)?
     var onOpenNearbySettings: (() -> Void)?
-    var onShowProfiles: ((NSView, Bool) -> Void)?
+    var onOpenProtection: (() -> Void)?
+    var onOpenRules: (() -> Void)?
     var onRequestHeadSetup: (() -> Void)?
     var onCancelHeadSetup: (() -> Void)?
 
-    private let motion = CMHeadphoneMotionManager()
-    private let overlay = ShieldOverlay()
+    private lazy var motion = CMHeadphoneMotionManager()
+    private var motionHasStarted = false
+    private var motionLifecyclePaused = false
+    private var motionRunGeneration = 0
+    private var motionAwaitingSample = false
     private let shortcuts = GlobalShortcuts()
-    private var response = ShieldResponse()
     private var center: simd_quatd?
     private var latest: simd_quatd?
     private var sourceLocation: CMDeviceMotion.SensorLocation?
@@ -86,8 +135,6 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
     private var timer: Timer?
     private var previewEnd: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
-    private var keyCode: UInt32
-    private var keyModifiers: UInt32
     private var privacyObservation: AnyCancellable?
     private var calibration = AdaptiveCalibration()
     private var learningStarted: TimeInterval = 0
@@ -103,23 +150,40 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         let calibrated: Bool
         let everCalibrated: Bool
         let dismissedForLoss: Bool
-        let response: ShieldResponse
+        let ruleResponses: [UUID: ShieldResponse]
     }
 
-    override init() {
-        let prefs = UserDefaults.standard
-        trackingSource = HeadTrackingSource(rawValue: prefs.string(forKey: "headTrackingSource") ?? "") ?? .airPods
-        demoMode = prefs.bool(forKey: "includeBlurInCaptures")
-        comfort = prefs.object(forKey: "comfort") == nil ? 15 : max(2, min(30, prefs.double(forKey: "comfort")))
-        transition = prefs.object(forKey: "transition") == nil ? 18 : max(5, min(30, prefs.double(forKey: "transition")))
-        blur = prefs.object(forKey: "blur") == nil ? 28 : max(10, min(70, prefs.double(forKey: "blur")))
-        keyCode = prefs.object(forKey: "shortcutKey") == nil ? UInt32(kVK_ANSI_C) : UInt32(prefs.integer(forKey: "shortcutKey"))
-        keyModifiers = prefs.object(forKey: "shortcutModifiers") == nil ? UInt32(controlKey | optionKey | cmdKey) : UInt32(prefs.integer(forKey: "shortcutModifiers"))
-        shortcutLabel = prefs.string(forKey: "shortcutLabel") ?? "⌃⌥⌘C"
+    override convenience init() {
+        self.init(preferences: .standard)
+    }
+    init(preferences: UserDefaults, executor: ProtectionPlanExecuting? = nil,
+         nearby suppliedNearby: NearbyPeople? = nil, cameraTracking suppliedCamera: CameraHeadTracking? = nil, screenAccess: @escaping () -> Bool = { CGPreflightScreenCaptureAccess() },
+         cameraPermission: @escaping () -> Bool = { AVCaptureDevice.authorizationStatus(for: .video) == .authorized },
+         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }, runsRuleTimer: Bool = true, startsEventSources: Bool = true) {
+        updates = AppUpdates(preferences: preferences)
+        startsPermissionSensors = startsEventSources
+        self.screenAccess = screenAccess
+        self.cameraPermission = cameraPermission
+        self.nearby = suppliedNearby ?? NearbyPeople()
+        self.cameraTracking = suppliedCamera ?? CameraHeadTracking()
+        rulePermissions = RulePermissionState(screenGranted: screenAccess(), cameraGranted: cameraPermission())
+        let renderer = ScreenBlurExecutor()
+        ruleExecutor = renderer
+        var migrationError: Error?
+        let coordinator: ProtectionCoordinator?
+        do { coordinator = try ProtectionCoordinator(store: ProtectionStore(storage: preferences), executor: executor ?? renderer, clock: clock, runsTimer: runsRuleTimer) }
+        catch { coordinator = nil; migrationError = error }
+        protectionCoordinator = coordinator
+        let initial = coordinator?.document.preferences.defaultBlur ?? BlurParameters()
+        trackingSource = .airPods; demoMode = false
+        comfort = initial.comfort; transition = initial.transition; blur = initial.radius
         super.init()
+        if startsEventSources { verifyScreenPermission() }
+        updates.useProtectionPreferences(read: { [weak self] in self?.presentationPreference($0) },
+                                         write: { [weak self] in self?.setPresentationPreference($0, $1) })
+        if coordinator == nil { nearby.configureRules([], cameraID: "") }
+        if migrationError != nil { captureNotice = "Rules could not be loaded. Your saved preferences are unchanged. Restart to retry migration." }
         cameraTracking.onChange = { [weak self] in self?.receiveCameraTracking() }
-        nearby.onCoverage = { [weak self] value in self?.privacy.setNearbyCovered(value) }
-        nearby.onMonitoring = { [weak self] value in self?.privacy.setNearbyMonitoring(value) }
         protectionCheck.onBegin = { [weak self] in self?.nearby.suspend(for: .protectionTest); self?.pauseCamera(for: .protectionTest) }
         protectionCheck.onEnd = { [weak self] in self?.nearby.resume(after: .protectionTest); self?.resumeCamera(after: .protectionTest) }
         protectionCheck.onDemoCoverage = { [weak self] in self?.privacy.setTestCovered($0) }
@@ -133,73 +197,41 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
             guard let self else { return .escapeUnavailable }
             if self.nearby.response == .blur, !self.screenPermission { return .screenPermission }
             guard self.shortcuts.armEscape(true) else {
-                self.privacyShortcutError = "Escape is unavailable. Nearby people could not start."
+                self.shortcutNotice = "Escape is unavailable. Nearby people could not start."
                 return .escapeUnavailable
             }
             return nil
         }
         nearbyObservation = nearby.objectWillChange.receive(on: RunLoop.main).sink { [weak self] _ in
             self?.objectWillChange.send()
-            self?.refreshEscape()
-            self?.updateShield()
+            if self?.protectionCoordinator == nil {
+                self?.refreshEscape()
+                self?.updateShield()
+            }
         }
-        privacy.blurRadius = blur
-        overlay.includeInCaptures = demoMode
-        privacy.includeInCaptures = demoMode
-        if screenPermission { UserDefaults.standard.set(true, forKey: "screenAccessPreviouslyGranted") }
-        motion.delegate = self
         refreshResponse()
         shortcuts.onRecenter = { [weak self] in self?.recenter() }
         shortcuts.onEscape = { [weak self] in
             guard let self else { return }
+            self.ruleRegionSelector.close()
+            if self.recordingRuleShortcut { self.recordingRuleShortcut = false }
             if self.headSetupActive { self.onCancelHeadSetup?() } else { self.dismissShield() }
         }
-        shortcuts.onPrivacy = { [weak self] in self?.toggleInstantShield() }
-        shortcuts.onArea = { [weak self] in self?.privacy.chooseArea() }
-        shortcuts.onPeek = { [weak self] value in self?.privacy.setPeeking(value) }
-        overlay.onClear = { [weak self] in self?.refreshEscape() }
-        privacy.requestEscape = { [weak self] in self?.shortcuts.armEscape(true) ?? false }
-        privacy.onRulesChanged = { [weak self] in
-            self?.refreshResponse()
-            self?.updateShield()
-        }
-        privacy.onActivityChanged = { [weak self] in
-            guard let self else { return }
-            self.refreshEscape()
-            if !self.shortcuts.armPeek(self.privacy.instant) {
-                self.privacyShortcutError = "Hold to peek is in use by another app. Escape still clears the shield."
-            }
-            self.updateShield()
-        }
+        shortcuts.onRule = { [weak self] shortcut, pressed in self?.handleRuleShortcut(shortcut, pressed: pressed) }
         privacyObservation = privacy.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
-        if !shortcuts.setPrivacyShortcut() {
-            privacyShortcutError = "⌃⌥⌘P is in use by another app. Use Shield screen in the menu instead."
-        }
-        if !shortcuts.setAreaShortcut() {
-            areaShortcutError = "⌃⌥⌘A is in use by another app. Use Choose area or the notch button."
-        }
-        overlay.onCaptureStatus = { [weak self] notice in
-            if self?.captureNotice != notice { self?.captureNotice = notice }
-        }
-        overlay.onPermissionDenied = { [weak self] in
-            guard let self else { return }
-            self.screenPermission = false
-            self.stopPreview()
-            self.clearOverlay()
-            self.status = "Screen access needed"
-            self.captureNotice = "Screen access is unavailable. Open Screen Settings to restore it."
-        }
-        if !shortcuts.setRecenter(keyCode: keyCode, modifiers: keyModifiers) {
-            shortcutError = "The recenter shortcut is in use. Record a different one."
-        }
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.refreshDisplays() }
         })
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.overlay.activeSpaceChanged() }
+            Task { @MainActor in
+                self?.privacy.ruleSources?.refresh()
+            }
         })
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.refreshScreenPermission(); self?.loginPreference.refresh(); self?.updates.checkIfDue() }
+            Task { @MainActor in self?.refreshRulePermissions(retryRejectedCapture: true); self?.verifyScreenPermission(); self?.loginPreference.refresh(); self?.updates.checkIfDue() }
+        })
+        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.recordingRuleShortcut = false }
         })
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.prepareForSleep() }
@@ -221,6 +253,7 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
                 guard let self else { return }
                 self.nearby.resume(after: .systemSleep)
                 self.resumeCamera(after: .systemSleep)
+                self.protectionCoordinator?.wake()
                 guard self.enabled else { return }
                 self.detail = "Look at your screen and recenter after waking your Mac."
                 self.beginMotionIfAvailable()
@@ -230,14 +263,120 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.heartbeat() }
         }
+        if let coordinator {
+            coordinator.warnings.visible = false
+            let sources = RuleEventSources(coordinator: coordinator)
+            privacy.attachRules(sources)
+            if startsEventSources {
+                coordinator.refreshContext = { [weak self, weak sources] in
+                    guard let self else { return [] }
+                    self.refreshRulePermissions()
+                    return (sources?.contextEvents() ?? []) + self.ruleShieldEvents(resuming: true)
+                }
+            }
+            sources.onRetryCapture = { [weak renderer] in renderer?.retryCapture() }
+            coordinator.prepareEscape = { [weak self] in
+                guard let self, let coordinator = self.protectionCoordinator else { return false }
+                let document = coordinator.document
+                if !self.recordingRuleShortcut && !self.shortcuts.configureRules(ShortcutRegistry(rules: document.rules, recenter: document.preferences.recenterShortcut),
+                    recenter: document.preferences.recenterShortcut, activeManualRules: coordinator.activeManualRuleIDs) {
+                    self.shortcutNotice = "The peek shortcut is in use. Record a different one."
+                }
+                let needsEscape = coordinator.requiresEscape
+                let available = self.shortcuts.armEscape(needsEscape)
+                return needsEscape && available
+            }
+            coordinator.prepareRuleBindings = { [weak self] document in
+                guard let self, let coordinator = self.protectionCoordinator else { return false }
+                let registry = ShortcutRegistry(rules: document.rules, recenter: document.preferences.recenterShortcut)
+                let previous = ShortcutRegistry(rules: coordinator.document.rules, recenter: coordinator.document.preferences.recenterShortcut)
+                let changedPeekIDs = Set(registry.bindings.filter { binding in
+                    guard binding.operation == .peek else { return false }
+                    return !previous.bindings.contains { $0.ruleID == binding.ruleID && $0.operation == .peek &&
+                        $0.binding.keyCode == binding.binding.keyCode && $0.binding.modifiers == binding.binding.modifiers }
+                }.map(\.ruleID))
+                return self.shortcuts.configureRules(registry, recenter: document.preferences.recenterShortcut,
+                    activeManualRules: coordinator.activeManualRuleIDs.union(changedPeekIDs))
+            }
+            coordinator.onRulesChanged = { [weak self] _ in self?.syncRuleConfiguration() }
+            coordinator.onPlanChanged = { [weak self] plan in self?.receiveRulePlan(plan) }
+            renderer.onText = { [weak coordinator] id, regions in coordinator?.send(.detectedText(id, regions: regions)) }
+            renderer.onFailure = { [weak self] error in
+                self?.privacy.ruleCaptureFailed(error)
+                let failure = error as NSError
+                if failure.domain == SCStreamErrorDomain && failure.code == SCStreamError.Code.userDeclined.rawValue {
+                    self?.recordCapturePermissionFailure()
+                }
+            }
+            renderer.onReady = { [weak self] in
+                guard let self else { return }
+                if self.rulePermissions.captureRejected {
+                    self.rulePermissions.captureRejected = false
+                    self.protectionCoordinator?.send(.permission(.screen, granted: self.screenPermission))
+                }
+                self.privacy.ruleCaptureReady()
+            }
+            renderer.onTextFailure = { [weak self] _ in self?.privacy.ruleTextFailed() }
+            let faceAdapter = NearbyRuleAdapter(nearby: nearby, coordinator: coordinator, cameraPermission: cameraPermission)
+            faceAdapter.onError = { [weak self] _ in self?.captureNotice = "Protection rules could not be saved. Your previous rules are still in use." }
+            nearbyRuleAdapter = faceAdapter
+            coordinator.onRulesEnabled = { [weak self] rules in self?.guideRulePermissions(rules, force: true) }
+            coordinator.onBlurPermissionNeeded = { [weak self, weak coordinator] rule in
+                guard let self, let coordinator else { return }
+                var blurRule = rule; blurRule.action = .blur(coordinator.document.preferences.defaultBlur, peek: nil)
+                self.guideRulePermissions([blurRule], force: true)
+            }
+            syncRuleConfiguration()
+            ruleObservation = coordinator.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        }
         refreshDisplays()
-        privacy.start()
+        if startsEventSources {
+            privacy.start()
+        }
     }
 
     var fullCoverAngle: Int { Int(comfort + transition) }
+    var cameraPermissionGranted: Bool { rulePermissions.cameraGranted }
+    func permissionGranted(_ kind: PermissionKind) -> Bool {
+        switch kind {
+        case .screen: return screenPermission
+        case .camera: return cameraPermissionGranted
+        case .motion:
+            let value = CMHeadphoneMotionManager.authorizationStatus()
+            return value == .authorized
+        }
+    }
+    func missingPermissions(for rule: ProtectionRule) -> Set<PermissionKind> {
+        var missing = rulePermissions.missing(in: rule.requiredPermissions, motionGranted: permissionGranted(.motion))
+        if rulePermissions.screenCheckPending || rulePermissions.screenCheckUnavailable { missing.remove(.screen) }
+        return missing
+    }
+    func guideRulePermissions(_ rules: [ProtectionRule], force: Bool = false) {
+        refreshRulePermissions()
+        let missing = rules.reduce(into: Set<PermissionKind>()) { $0.formUnion(missingPermissions(for: $1)) }
+        for kind in [PermissionKind.screen, .camera, .motion] where missing.contains(kind) && (force || !requestedRulePermissions.contains(kind)) {
+            requestedRulePermissions.insert(kind)
+            if let requestRulePermission { requestRulePermission(kind); continue }
+            switch kind {
+            case .screen: requestScreenPermission()
+            case .camera: requestCameraPermission()
+            case .motion: openMotionSettings()
+            }
+        }
+    }
+    func requestCameraPermission() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let granted = await NearbyPeople.requestCameraAccess()
+            if !granted { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!) }
+            refreshRulePermissions()
+            if granted { syncRuleConfiguration(); if nearby.canRetry { nearby.retry() }; updateRuleShield() }
+            objectWillChange.send()
+        }
+    }
     var canRecenter: Bool { trackingSource == .camera ? enabled && cameraTracking.failure == nil && cameraPauses.isEmpty : enabled && connected && latest != nil && ProcessInfo.processInfo.systemUptime - lastSample < 1.5 }
-    var hasCompletedHeadSetup: Bool { UserDefaults.standard.bool(forKey: "headSetupCompleted.v1") }
-    var screenAccessPreviouslyGranted: Bool { UserDefaults.standard.bool(forKey: "screenAccessPreviouslyGranted") }
+    var hasCompletedHeadSetup: Bool { appearanceValues()["headSetupCompleted.v1"] as? Bool ?? false }
+    var screenAccessPreviouslyGranted: Bool { appearanceValues()["screenAccessPreviouslyGranted"] as? Bool ?? false }
     var screenAccessAction: String { screenAccessPreviouslyGranted ? "Restore screen access" : "Allow screen access" }
 
     var connectedDisplays: [(id: UInt32, name: String)] {
@@ -275,7 +414,7 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         })
         if !displayLayout.isEmpty, displayLayout != layout { invalidateDisplayCalibration() }
         displayLayout = layout
-        overlay.reconcileScreens()
+        privacy.ruleSources?.refresh()
     }
 
     private func invalidateDisplayCalibration() {
@@ -328,7 +467,6 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
     }
 
     func setFocus(_ value: Bool) {
-        if value { stop() }
         privacy.setFocus(value)
     }
 
@@ -345,22 +483,13 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
 
     func retryNearbyPeople() {
         if nearby.response == .blur, !screenPermission { requestScreenPermission(); return }
-        guard shortcuts.armEscape(true) else { privacyShortcutError = "Escape is unavailable. Nearby people could not start."; return }
+        guard shortcuts.armEscape(true) else { shortcutNotice = "Escape is unavailable. Nearby people could not start."; return }
         nearby.retry()
     }
 
     func retryNearbyBlur() {
         guard screenPermission else { requestScreenPermission(); return }
         privacy.start()
-        if !privacy.captureUnavailable { privacy.setNearbyCovered(nearby.covered) }
-    }
-
-    func setTrackingSource(_ source: HeadTrackingSource) {
-        guard source != trackingSource else { return }
-        stop()
-        trackingSource = source
-        UserDefaults.standard.set(source.rawValue, forKey: "headTrackingSource")
-        detail = source == .camera ? "Use your camera to blur when you turn away. Start tracking to calibrate." : "Connect your AirPods to this Mac, then start head tracking."
     }
 
     func selectTrackingCamera(_ id: String) {
@@ -372,8 +501,22 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
 
     func retryCameraTracking() { startCameraTracking() }
 
+    func calibrateHeadSource(_ source: HeadTrackingSource) {
+        switch source {
+        case .camera:
+            if cameraTracking.running && cameraTracking.failure == nil { cameraTracking.recenter() }
+            else { startCameraTracking() }
+        case .airPods:
+            if canRecenter && trackingSource == .airPods { recenter() }
+            else { onRequestHeadSetup?() }
+        }
+    }
+
     private func startCameraTracking() {
-        guard enabled, trackingSource == .camera, cameraPauses.isEmpty else { return }
+        let wantsCamera = protectionCoordinator?.document.rules.contains { rule in
+            if case .headTurn(.camera) = rule.trigger { return rule.isEnabled }; return false
+        } ?? (enabled && trackingSource == .camera)
+        guard wantsCamera, cameraPauses.isEmpty, !cameraTracking.running || cameraTracking.failure != nil else { return }
         refreshResponse()
         cameraTracking.start(deviceID: nearby.selectedCameraID, keepCovered: protectCameraOnResume)
         protectCameraOnResume = false
@@ -381,9 +524,13 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
     }
 
     private func receiveCameraTracking() {
+        if protectionCoordinator != nil, trackingSource != .camera {
+            objectWillChange.send(); updateRuleShield(); return
+        }
         guard enabled, trackingSource == .camera else { return }
         connected = cameraTracking.policy.hasFace
         calibrated = cameraTracking.policy.calibrated
+        if calibrated { everCalibrated = true }
         offset = cameraTracking.policy.offset
         detail = cameraTracking.message
         objectWillChange.send()
@@ -391,27 +538,68 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
     }
 
     func pauseCamera(for reason: NearbyPauseReason) {
-        guard cameraPauses.insert(reason).inserted, enabled, trackingSource == .camera else { return }
+        if reason == .systemSleep || reason == .displaySleep || reason == .inactiveSession { protectionCoordinator?.suspend() }
+        guard cameraPauses.insert(reason).inserted, cameraTracking.running else { return }
         protectCameraOnResume = protectCameraOnResume || cameraTracking.policy.calibrated || cameraTracking.policy.coverage > 0
-        cameraTracking.stop(); clearOverlay()
+        cameraTracking.stop(); updateRuleShield()
         status = "Camera head tracking paused"
     }
 
     func resumeCamera(after reason: NearbyPauseReason) {
         guard cameraPauses.remove(reason) != nil else { return }
+        if !cameraPauses.contains(.systemSleep), !cameraPauses.contains(.displaySleep), !cameraPauses.contains(.inactiveSession) { protectionCoordinator?.wake() }
         startCameraTracking()
     }
 
-    func setEnabled(_ value: Bool) {
-        if value { start() } else { stop() }
+    private var notchSuspendedRuleIDs: Set<UUID> = []
+    var headRulesEnabled: Bool {
+        protectionCoordinator?.document.rules.contains { rule in if case .headTurn = rule.trigger { return rule.isEnabled }; return false } == true
+    }
+    var currentAutomaticRuleIDs: Set<UUID> {
+        guard let coordinator = protectionCoordinator else { return [] }
+        let active = Set(coordinator.plan.activeRules.map(\.id))
+        return Set(coordinator.document.rules.filter { rule in
+            guard rule.isEnabled, active.contains(rule.id) else { return false }
+            if case .manual = rule.trigger { return false }; return true
+        }.map(\.id))
+    }
+    var automaticDetectionEnabled: Bool { !currentAutomaticRuleIDs.isEmpty }
+    func setAutomaticDetection(_ active: Bool) {
+        guard let coordinator = protectionCoordinator else { return }
+        let targets = active ? notchSuspendedRuleIDs : currentAutomaticRuleIDs
+        guard !targets.isEmpty else {
+            // Clearing protection keeps setups enabled but suppresses their
+            // responses, so nothing is "active" yet. Turning detection back on
+            // should re-arm them instead of reporting that none exist.
+            let hasEnabledAutomatic = coordinator.document.rules.contains { rule in
+                guard rule.isEnabled else { return false }
+                if case .manual = rule.trigger { return false }; return true
+            }
+            if active, hasEnabledAutomatic, (coordinator.plan.state == .cleared || coordinator.plan.state == .running) {
+                coordinator.resume(); return
+            }
+            captureNotice = "No automatic setup is currently active or available to resume. Review enabled setups and their conditions in Auto & shortcuts."
+            onOpenRules?(); return
+        }
+        var rules = coordinator.document.rules
+        for index in rules.indices where targets.contains(rules[index].id) {
+            if case .manual = rules[index].trigger { continue }
+            rules[index].isEnabled = active
+        }
+        do {
+            try coordinator.saveRules(rules)
+            if active { notchSuspendedRuleIDs.subtract(targets) } else { notchSuspendedRuleIDs.formUnion(targets) }
+        } catch { captureNotice = "Protection rules could not be saved. Your previous rules are still in use." }
     }
 
     func start() {
+        guard protectionCoordinator != nil else { return }
         guard !enabled else { return }
         if trackingSource == .camera {
             guard screenPermission else { requestScreenPermission(); return }
-            guard shortcuts.armEscape(true) else { privacyShortcutError = "Escape is unavailable. Camera tracking could not start."; return }
+            guard shortcuts.armEscape(true) else { shortcutNotice = "Escape is unavailable. Camera tracking could not start."; return }
             enabled = true; dismissedForLoss = false
+            setHeadRulesEnabled(true)
             startCameraTracking(); return
         }
         if !headSetupActive, !hasCompletedHeadSetup, let onRequestHeadSetup {
@@ -425,6 +613,9 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
             return
         }
         enabled = true
+        setHeadRulesEnabled(true)
+        motionHasStarted = true; motionLifecyclePaused = false
+        motion.delegate = self
         status = "Connecting to AirPods"
         detail = "Wear at least one AirPod, look at the screen, then click Center my gaze."
         motion.startConnectionStatusUpdates()
@@ -432,13 +623,15 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
     }
 
     func stop() {
+        let wasUsingMotion = motionHasStarted
+        motionHasStarted = false; motionLifecyclePaused = false; motionRunGeneration += 1
         cancelLearning()
         invalidateDisplayCalibration()
         enabled = false
+        if !shuttingDown { setHeadRulesEnabled(false) }
         protectCameraOnResume = false
         cameraTracking.stop()
-        motion.stopDeviceMotionUpdates()
-        motion.stopConnectionStatusUpdates()
+        if wasUsingMotion { motion.stopDeviceMotionUpdates(); motion.stopConnectionStatusUpdates() }
         center = nil
         latest = nil
         sourceLocation = nil
@@ -447,7 +640,7 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         everCalibrated = false
         dismissedForLoss = false
         pendingCalibration = false
-        response.recenter()
+        ruleHeadResponses = [:]
         stopPreview()
         clearOverlay()
         status = "Paused"
@@ -455,11 +648,14 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
     }
 
     private func beginMotionIfAvailable() {
-        guard trackingSource == .airPods, enabled, !motion.isDeviceMotionActive, motion.isDeviceMotionAvailable else { return }
+        guard trackingSource == .airPods, enabled, !motionLifecyclePaused,
+              !motion.isDeviceMotionActive, motion.isDeviceMotionAvailable else { return }
         motionReferenceGeneration += 1
         invalidateDisplayCalibration()
+        motionRunGeneration += 1
+        let run = motionRunGeneration
         motion.startDeviceMotionUpdates(to: .main) { [weak self] sample, error in
-            guard let self, self.enabled else { return }
+            guard let self, self.enabled, !self.motionLifecyclePaused, self.motionRunGeneration == run else { return }
             if let error {
                 self.detail = error.localizedDescription
                 return
@@ -483,7 +679,7 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         }
         sourceLocation = sample.sensorLocation
         latest = simd_normalize(simd_quatd(ix: q.x, iy: q.y, iz: q.z, r: q.w))
-        lastSample = now
+        lastSample = now; motionAwaitingSample = false
         if !connected { connected = true }
         if pendingCalibration { recenter() }
         if let center, let latest, now - lastPublished > 1.0 / 30 {
@@ -517,118 +713,51 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         pendingCalibration = false
         dismissedForLoss = false
         offset = HeadOffset(yaw: 0, pitch: 0)
-        response.recenter()
+        ruleHeadResponses = [:]
         stopPreview()
         clearOverlay()
         status = "Watching your head motion"
         detail = QG("Small movements stay clear. Turn past %ld° to cover the screen.", Int(comfort))
     }
 
-    func dismissShield(file: StaticString = #fileID, line: UInt = #line) {
+    func dismissShield() {
         protectionCheck.stopDemonstration()
-        nearby.stop(file: file, line: line)
-        if trackingSource == .camera { stop() }
+        // Clearing is a temporary runtime action. Suspend sensors without
+        // rewriting rule switches so automatic setups stay enabled and can be
+        // resumed instead of being silently turned off.
+        nearby.suspend(for: .globalPause)
+        if trackingSource == .camera { pauseCamera(for: .globalPause) }
         cancelLearning()
         stopPreview()
-        response.dismiss()
+        for id in ruleHeadResponses.keys { ruleHeadResponses[id]?.dismiss() }
         displayTracking.dismiss()
         dismissedForLoss = true
         privacy.dismissAll()
         clearOverlay()
+        if let coordinator = protectionCoordinator { receiveRulePlan(coordinator.plan); return }
         status = enabled ? "Shield dismissed" : "Paused"
         detail = "Face your screen to rearm, or use Center my gaze."
     }
 
-    private func updateShield() {
-        if privacy.fullScreen {
-            stopPreview()
-            if privacy.captureUnavailable { status = "Privacy capture needs attention" }
-            else if !privacy.ready { status = "Preparing privacy blur" }
-            else { status = privacy.nearbyCovered ? QG("Covered · %@", QG(nearby.noticeTitle)) : privacy.peeking ? "Peeking at your screen" : "Privacy blur is on" }
-            return
-        }
-        guard !previewing else { return }
-        if learning { clearOverlay(); status = "Learning your normal movement"; return }
-        if headSetupActive { clearOverlay(); status = "Setting up head tracking"; return }
-        guard enabled else {
-            clearOverlay()
-            if privacy.focusEnabled { status = "Focus mode is on" }
-            else if nearby.wantsMonitoring { status = nearby.message }
-            else { status = "Ready when you are" }
-            return
-        }
-        if privacy.ruleMode == .pause {
-            clearOverlay()
-            status = QG("Head blur paused for %@", privacy.frontAppName)
-            return
-        }
-        if trackingSource == .camera {
-            guard cameraPauses.isEmpty else { clearOverlay(); return }
-            let value = cameraTracking.policy.coverage
-            guard applyCoverage(value, direction: .from(cameraTracking.policy.offset)) else { return }
-            status = cameraTracking.message
-            return
-        }
-        if !connected || !calibrated {
-            if everCalibrated && !dismissedForLoss {
-                guard applyCoverage(1, direction: .left) else { return }
-                status = "Covered while motion is unavailable"
-            } else { clearOverlay() }
-            return
-        }
-        if perDisplayTracking, !connectedDisplays.isEmpty, connectedDisplays.allSatisfy({ displayCalibrationIDs.contains($0.id) }), let latest {
-            let settings = privacy.ruleMode.settings(comfort: comfort, transition: transition, blur: blur)
-            let values = displayTracking.coverage(current: latest, displays: connectedDisplays.map(\.id),
-                                                  comfort: settings.comfort, transition: settings.transition)
-            let maximum = values.values.max() ?? 0
-            guard applyCoverage(maximum, direction: .from(offset), displays: values) else { return }
-            status = displayCalibrationIDs.isEmpty ? "Center each display to use display tracking" : "Protecting displays you turn away from"
-            return
-        }
-        let value = response.coverage(angle: offset.angle)
-        if !response.dismissedUntilCentered { dismissedForLoss = false }
-        guard applyCoverage(value, direction: .from(offset)) else { return }
-        if response.dismissedUntilCentered { status = "Shield dismissed until you face center" }
-        else if value > 0.001 { status = QG("Screen covered %ld%%", Int(value * 100)) }
-        else { status = "Watching your head motion" }
-    }
-
-    @discardableResult private func applyCoverage(_ value: Double, direction: ShieldDirection, displays: [UInt32: Double]? = nil) -> Bool {
-        if value > 0.001 {
-            guard screenPermission else {
-                clearOverlay()
-                status = "Screen access needed"
-                return false
-            }
-            guard shortcuts.armEscape(true) else {
-                clearOverlay()
-                status = "Escape is unavailable"
-                detail = "Another app reserved Escape. Pause that shortcut and try again."
-                return false
-            }
-            let radius = previewing ? blur : privacy.ruleMode.settings(comfort: comfort, transition: transition, blur: blur).blur
-            overlay.show(coverage: value, direction: direction, blurRadius: radius, displays: displays)
-        } else {
-            overlay.fadeOut()
-        }
-        if coverage != value { coverage = value }
-        return true
-    }
+    private func updateShield() { updateRuleShield() }
 
     private func clearOverlay() {
-        overlay.clear()
-        if coverage != 0 { coverage = 0 }
-        refreshEscape()
+        guard let coordinator = protectionCoordinator else { return }
+        coordinator.send(coordinator.document.rules.compactMap { rule -> ProtectionEvent? in
+            guard case .headTurn = rule.trigger else { return nil }
+            return .headRuleCoverage(rule.id, coverage: 0, displays: [:], calibrated: false)
+        })
     }
 
     private func refreshEscape() {
-        shortcuts.armEscape((enabled && trackingSource == .camera) || nearby.wantsMonitoring || privacy.wantsProtection || overlay.isCapturing || coverage > 0)
+        _ = shortcuts.armEscape(protectionCoordinator?.requiresEscape == true)
     }
 
     func toggleInstantShield() {
         cancelLearning()
         stopPreview()
         privacy.toggleInstant()
+        if protectionCoordinator != nil { updateRuleShield(); return }
         if !privacy.instant {
             if enabled { updateShield() } else { status = "Ready when you are" }
         }
@@ -670,7 +799,7 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         setupSnapshot = HeadSetupSnapshot(enabled: enabled, comfort: comfort, center: center,
                                           source: sourceLocation, generation: motionReferenceGeneration, calibrated: calibrated,
                                           everCalibrated: everCalibrated, dismissedForLoss: dismissedForLoss,
-                                          response: response)
+                                          ruleResponses: ruleHeadResponses)
         cancelLearning()
         suggestedComfort = nil
         learningNotice = nil
@@ -689,14 +818,14 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         headSetupActive = false
         if completed, canRecenter {
             recenter()
-            UserDefaults.standard.set(true, forKey: "headSetupCompleted.v1")
+            saveAppearance("headSetupCompleted.v1", true)
         } else if snapshot.enabled && enabled {
             comfort = snapshot.comfort
             center = snapshot.source == sourceLocation && snapshot.generation == motionReferenceGeneration ? snapshot.center : nil
             calibrated = snapshot.calibrated && center != nil && connected
             everCalibrated = snapshot.everCalibrated
             dismissedForLoss = snapshot.dismissedForLoss
-            response = snapshot.response
+            ruleHeadResponses = snapshot.ruleResponses
             refreshResponse()
             if let center, let latest { offset = HeadOffset.between(center: center, current: latest) }
         } else {
@@ -707,27 +836,18 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
     }
 
     func previewShield() {
-        guard !privacy.instant else { return }
-        cancelLearning()
-        stopPreview()
-        guard applyCoverage(1, direction: .right) else { return }
-        previewing = true
-        status = "Preview ends in 5 seconds"
+        guard let coordinator = protectionCoordinator else { return }
+        cancelLearning(); stopPreview(); previewing = true
+        coordinator.setTransient(previewRuleID, name: "Preview", active: true)
         previewEnd = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
-            guard !Task.isCancelled, let self, self.previewing else { return }
-            self.stopPreview(immediate: false)
-            if self.enabled { self.updateShield() }
-            else { self.status = "Ready when you are" }
+            self?.stopPreview(); self?.updateShield()
         }
     }
 
     private func stopPreview(immediate: Bool = true) {
-        previewEnd?.cancel()
-        previewEnd = nil
-        previewing = false
-        if immediate { clearOverlay() }
-        else { overlay.fadeOut(); coverage = 0 }
+        previewEnd?.cancel(); previewEnd = nil; previewing = false
+        protectionCoordinator?.setTransient(previewRuleID, name: "Preview", active: false)
     }
 
     func openMotionSettings() {
@@ -735,8 +855,10 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
     }
 
     func requestScreenPermission() {
-        if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
-        refreshScreenPermission()
+        guard !rulePermissions.screenCheckPending else { return }
+        if !screenAccess() && !screenPermission { _ = CGRequestScreenCaptureAccess() }
+        refreshRulePermissions(retryRejectedCapture: true)
+        verifyScreenPermission()
         if !screenPermission {
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
         }
@@ -762,61 +884,66 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         }
     }
 
-    private func refreshScreenPermission() {
-        guard !overlay.isCapturing else { return }
-        let permission = CGPreflightScreenCaptureAccess()
-        guard permission != screenPermission else { return }
-        screenPermission = permission
-        captureNotice = nil
-        if permission {
-            UserDefaults.standard.set(true, forKey: "screenAccessPreviouslyGranted")
-            if enabled { updateShield() }
-            else { status = "Ready when you are" }
-        } else {
-            stopPreview()
-            clearOverlay()
-            status = "Screen access needed"
+    func recordCapturePermissionFailure() {
+        screenPermissionVerifier.cancel()
+        rulePermissions.screenCheckPending = false
+        rulePermissions.rejectCapture(screenPreflight: screenAccess())
+        protectionCoordinator?.send(.permission(.screen, granted: false))
+    }
+
+    func verifyScreenPermission() {
+        guard startsPermissionSensors, !shuttingDown, !screenPermissionVerifier.isChecking else { return }
+        refreshRulePermissions()
+        rulePermissions.screenCheckPending = true
+        rulePermissions.screenCheckUnavailable = false
+        screenPermissionVerifier.start { [weak self] granted in
+            guard let self, !self.shuttingDown else { return }
+            self.rulePermissions.completeScreenCheck(granted: granted)
+            self.protectionCoordinator?.send(.permission(.screen, granted: self.rulePermissions.captureAllowed))
+            if granted == true {
+                self.saveAppearance("screenAccessPreviouslyGranted", true)
+                self.ruleExecutor.retryCapture()
+            }
         }
     }
 
-    func recordShortcut(_ event: NSEvent) {
-        if event.keyCode == UInt16(kVK_Escape) { recordingShortcut = false; return }
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard !flags.intersection([.command, .control, .option]).isEmpty else {
-            shortcutError = "Include Command, Control, or Option in your shortcut."
-            return
+    func refreshRulePermissions(retryRejectedCapture: Bool = false) {
+        let previous = rulePermissions
+        var current = previous
+        let retry = current.refresh(screen: screenAccess(), camera: cameraPermission(), retryRejectedCapture: retryRejectedCapture)
+        guard current != previous else { return }
+        rulePermissions = current
+        protectionCoordinator?.send([.permission(.screen, granted: current.captureAllowed), .permission(.camera, granted: current.cameraGranted)])
+        if current.screenGranted != previous.screenGranted {
+            captureNotice = nil
+            if current.screenGranted {
+                saveAppearance("screenAccessPreviouslyGranted", true)
+                status = "Ready when you are"
+                if enabled { updateShield() }
+            } else {
+                stopPreview()
+                clearOverlay()
+                status = "Screen access needed"
+            }
         }
-        var modifiers: UInt32 = 0
-        var label = ""
-        if flags.contains(.control) { modifiers |= UInt32(controlKey); label += "⌃" }
-        if flags.contains(.option) { modifiers |= UInt32(optionKey); label += "⌥" }
-        if flags.contains(.shift) { modifiers |= UInt32(shiftKey); label += "⇧" }
-        if flags.contains(.command) { modifiers |= UInt32(cmdKey); label += "⌘" }
-        let names: [UInt16: String] = [49: "Space", 36: "Return", 48: "Tab", 51: "Delete", 123: "←", 124: "→", 125: "↓", 126: "↑"]
-        label += names[event.keyCode] ?? event.charactersIgnoringModifiers?.uppercased() ?? QG("Key %ld", Int(event.keyCode))
-        if keyCode == UInt32(event.keyCode), keyModifiers == modifiers {
-            recordingShortcut = false
-            shortcutError = nil
-            return
+        if current.cameraGranted != previous.cameraGranted, startsPermissionSensors {
+            if current.cameraGranted {
+                if nearby.canRetry { nearby.retry() }
+                startCameraTracking()
+            } else {
+                cameraTracking.stop()
+                if let document = protectionCoordinator?.document { nearbyRuleAdapter?.configure(document) }
+            }
         }
-        guard shortcuts.setRecenter(keyCode: UInt32(event.keyCode), modifiers: modifiers) else {
-            shortcutError = "That shortcut is already in use. Try another combination."
-            return
+        if retry { ruleExecutor.retryCapture() }
+        if previous.screenVerifiedByCaptureAPI && !current.screenVerifiedByCaptureAPI {
+            verifyScreenPermission()
         }
-        keyCode = UInt32(event.keyCode)
-        keyModifiers = modifiers
-        shortcutLabel = label
-        let prefs = UserDefaults.standard
-        prefs.set(Int(keyCode), forKey: "shortcutKey")
-        prefs.set(Int(modifiers), forKey: "shortcutModifiers")
-        prefs.set(label, forKey: "shortcutLabel")
-        shortcutError = nil
-        recordingShortcut = false
     }
 
     private func heartbeat() {
-        refreshScreenPermission()
-        guard enabled else { return }
+        refreshRulePermissions()
+        guard enabled, !motionLifecyclePaused else { return }
         if trackingSource == .camera { return }
         let auth = CMHeadphoneMotionManager.authorizationStatus()
         if auth == .denied || auth == .restricted {
@@ -856,8 +983,8 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         cancelLearning(message: "Calibration stopped while your Mac slept.")
         nearby.suspend(for: .systemSleep)
         pauseCamera(for: .systemSleep)
-        privacy.dismissAll()
-        motion.stopDeviceMotionUpdates()
+        if let coordinator = protectionCoordinator { coordinator.suspend() } else { privacy.dismissAll() }
+        if motionHasStarted { motionRunGeneration += 1; motion.stopDeviceMotionUpdates() }
         center = nil
         latest = nil
         connected = false
@@ -886,16 +1013,206 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
     }
 
     private func refreshResponse() {
-        let settings = privacy.ruleMode.settings(comfort: comfort, transition: transition, blur: blur)
-        cameraTracking.comfort = settings.comfort
-        cameraTracking.transition = settings.transition
-        response.comfort = settings.comfort
-        response.transition = settings.transition
+        cameraTracking.comfort = comfort; cameraTracking.transition = transition
     }
 
-    private func save(_ key: String, _ value: Double) { UserDefaults.standard.set(value, forKey: key) }
+    private func appearanceValues() -> [String: Any] {
+        guard let data = protectionCoordinator?.document.preferences.appearance else { return [:] }
+        return (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any] ?? [:]
+    }
+    private func saveAppearance(_ key: String, _ value: Any) {
+        guard !syncingRules else { return }
+        guard let coordinator = protectionCoordinator else { return }
+        var doc = coordinator.document
+        var appearance = appearanceValues(); appearance[key] = value
+        do {
+            doc.preferences.appearance = try PropertyListSerialization.data(fromPropertyList: appearance, format: .binary, options: 0)
+            try coordinator.save(doc)
+        } catch { captureNotice = "Protection rules could not be saved. Your previous rules are still in use." }
+    }
+    func presentationPreference(_ key: String) -> Any? {
+        return appearanceValues()[key]
+    }
+    func setPresentationPreference(_ key: String, _ value: Any) { saveAppearance(key, value) }
+    private func save(_ key: String, _ value: Double) {
+        guard !syncingRules else { return }
+        guard let coordinator = protectionCoordinator else { return }
+        var doc = coordinator.document
+        let previous = doc.preferences.defaultBlur
+        switch key {
+        case "comfort": doc.preferences.defaultBlur.comfort = value
+        case "transition": doc.preferences.defaultBlur.transition = value
+        case "blur": doc.preferences.defaultBlur.radius = value
+        default: saveAppearance(key, value); return
+        }
+        let previousStrong = AppProtectionMode.stronger.settings(comfort: previous.comfort, transition: previous.transition, blur: previous.radius)
+        let strongParameters = BlurParameters(radius: previousStrong.blur, comfort: previousStrong.comfort, transition: previousStrong.transition)
+        for index in doc.rules.indices {
+            if case .blur(let parameters, let peek) = doc.rules[index].action, parameters == previous {
+                doc.rules[index].action = .blur(doc.preferences.defaultBlur, peek: peek)
+            } else if case .headTurn = doc.rules[index].trigger, doc.rules[index].priority == 100,
+                      case .blur(let parameters, _) = doc.rules[index].action, parameters == strongParameters,
+                      doc.rules[index].guards.contains(where: { if case .appCondition = $0 { return true }; return false }) {
+                let defaults = doc.preferences.defaultBlur
+                let strong = AppProtectionMode.stronger.settings(comfort: defaults.comfort, transition: defaults.transition, blur: defaults.radius)
+                doc.rules[index].action = .blur(BlurParameters(radius: strong.blur, comfort: strong.comfort, transition: strong.transition), peek: nil)
+            }
+        }
+        do { try coordinator.save(doc) }
+        catch { captureNotice = "Protection rules could not be saved. Your previous rules are still in use." }
+    }
 
+    private func syncRuleConfiguration() {
+        guard let coordinator = protectionCoordinator, !syncingRules, !shuttingDown else { return }
+        syncingRules = true
+        defer { syncingRules = false }
+        let doc = coordinator.document
+        let defaults = doc.preferences.defaultBlur
+        if comfort != defaults.comfort { comfort = defaults.comfort }
+        if transition != defaults.transition { transition = defaults.transition }
+        if blur != defaults.radius { blur = defaults.radius }
+        let appearance = appearanceValues()
+        if let demo = appearance["includeBlurInCaptures"] as? Bool, demoMode != demo { demoMode = demo }
+        ruleExecutor.includeInCaptures = demoMode
+        let heads = doc.rules.filter { if case .headTurn = $0.trigger { return true }; return false }
+        let primary = heads.first(where: { rule in if case .headTurn(.airPods) = rule.trigger { return rule.isEnabled }; return false }) ?? heads.first(where: \.isEnabled) ?? heads.first
+        if let primary, case .headTurn(let source) = primary.trigger {
+            if source != trackingSource && enabled { stop() }
+            trackingSource = source
+        }
+        let displayMode: Bool = {
+            guard trackingSource == .airPods else { return false }
+            return heads.contains { rule in if case .headTurn(.airPods) = rule.trigger, case .display = rule.scope { return rule.isEnabled }; return false }
+        }()
+        if perDisplayTracking != displayMode { perDisplayTracking = displayMode }
+        let recenter = doc.preferences.recenterShortcut
+        if !shortcuts.configureRules(ShortcutRegistry(rules: doc.rules, recenter: recenter), recenter: recenter, activeManualRules: coordinator.activeManualRuleIDs) {
+            shortcutNotice = "That shortcut is already in use. Try another combination."
+        }
+        ruleExecutor.configureTextRules(doc.rules)
+        nearbyRuleAdapter?.configure(doc)
+        cameraTracking.configureRules(heads)
+        let airIDs = Set(heads.filter { rule in if case .headTurn(.airPods) = rule.trigger { return rule.isEnabled }; return false }.map(\.id))
+        ruleHeadResponses = ruleHeadResponses.filter { airIDs.contains($0.key) }
+        ruleDisplayTracking = ruleDisplayTracking.filter { airIDs.contains($0.key) }
+        ruleDisplayCenters = ruleDisplayCenters.filter { airIDs.contains($0.key) }
+        let wantsCamera = heads.contains { rule in if case .headTurn(.camera) = rule.trigger { return rule.isEnabled }; return false }
+        if wantsCamera && !cameraTracking.running && coordinator.plan.state == .running { startCameraTracking() }
+        if !wantsCamera && cameraTracking.running { cameraTracking.stop() }
+        let wantsHead = heads.contains { $0.isEnabled }
+        if wantsHead && !enabled && coordinator.plan.state == .running { start() }
+        if !wantsHead && enabled { stop() }
+        privacy.projectRules()
+        refreshResponse()
+        updateRuleShield()
+    }
+    private func setHeadRulesEnabled(_ active: Bool) {
+        guard let coordinator = protectionCoordinator, !syncingRules else { return }
+        var rules = coordinator.document.rules
+        for index in rules.indices {
+            if case .headTurn(let source) = rules[index].trigger, !active || source == trackingSource { rules[index].isEnabled = active }
+        }
+        do { try coordinator.saveRules(rules) }
+        catch { captureNotice = "Protection rules could not be saved. Your previous rules are still in use." }
+    }
+    private func reconcileMotionLifecycle(_ state: ProtectionEngineState) {
+        guard motionHasStarted else { return }
+        let pause: Bool = { if case .paused = state { return true }; return state == .suspended }()
+        guard pause != motionLifecyclePaused else { return }
+        motionLifecyclePaused = pause
+        if pause {
+            motionAwaitingSample = true
+            motionRunGeneration += 1
+            motion.stopDeviceMotionUpdates(); motion.stopConnectionStatusUpdates()
+        } else if enabled && trackingSource == .airPods {
+            motion.startConnectionStatusUpdates(); beginMotionIfAvailable()
+        }
+    }
+
+    private func receiveRulePlan(_ plan: ProtectionPlan) {
+        reconcileMotionLifecycle(plan.state)
+        privacy.projectRules()
+        nearbyRuleAdapter?.present(plan)
+        let value = plan.displays.map(\.fullScreenCoverage).max() ?? 0
+        if coverage != value { coverage = value }
+        if plan.state == .cleared { nearby.suspend(for: .globalPause); pauseCamera(for: .globalPause) }
+        else if case .paused = plan.state { nearby.suspend(for: .globalPause); pauseCamera(for: .globalPause) }
+        else if plan.state == .running {
+            nearby.resume(after: .globalPause); resumeCamera(after: .globalPause)
+            if !enabled && !syncingRules && !headSetupActive,
+               protectionCoordinator?.document.rules.contains(where: { if case .headTurn = $0.trigger { return $0.isEnabled }; return false }) == true { start() }
+        }
+        if plan.hasProtection {
+            status = QG("Protected by %@", plan.activeRules.map { QG($0.name) }.joined(separator: ", "))
+        } else if !plan.warnings.isEmpty {
+            status = QG("Warning from %@", plan.warnings.map { QG($0.rule.name) }.joined(separator: ", "))
+        } else if case .paused = plan.state { status = "Paused" }
+        else if plan.state == .cleared { status = "Shield dismissed" }
+        else if enabled && trackingSource == .camera { status = cameraTracking.message }
+        else if enabled && !calibrated { status = "Center your gaze" }
+        else { status = enabled ? "Watching your head motion" : "Ready when you are" }
+    }
+    private func updateRuleShield() {
+        guard let coordinator = protectionCoordinator else { return }
+        coordinator.send(ruleShieldEvents())
+        receiveRulePlan(coordinator.plan)
+    }
+    private func ruleShieldEvents(resuming: Bool = false) -> [ProtectionEvent] {
+        guard let coordinator = protectionCoordinator else { return [] }
+        let motionAllowed: Bool
+        if enabled && trackingSource == .airPods {
+            let authorization = CMHeadphoneMotionManager.authorizationStatus()
+            motionAllowed = authorization != .denied && authorization != .restricted
+        } else { motionAllowed = false }
+        let cameraAllowed = cameraPermission()
+        var events: [ProtectionEvent] = [.permission(.screen, granted: rulePermissions.captureAllowed), .permission(.motion, granted: motionAllowed), .permission(.camera, granted: cameraAllowed)]
+        for rule in coordinator.document.rules {
+            guard rule.isEnabled, case .headTurn(let source) = rule.trigger, case .blur(let parameters, _) = rule.action else { continue }
+            var value = 0.0, values: [UInt32: Double] = [:]
+            var isCalibrated = false, direction = ShieldDirection.from(offset)
+            if source == .camera {
+                if cameraTracking.running && cameraPauses.isEmpty, let policy = cameraTracking.rulePolicies[rule.id] {
+                    value = policy.coverage; isCalibrated = policy.calibrated || cameraTracking.calibratedRuleIDs.contains(rule.id)
+                    direction = .from(policy.offset)
+                } else if resuming && cameraTracking.calibratedRuleIDs.contains(rule.id) {
+                    value = 1; isCalibrated = true
+                }
+            } else if enabled && trackingSource == .airPods && !learning && !headSetupActive {
+                isCalibrated = calibrated || everCalibrated
+                if !connected || !calibrated || motionAwaitingSample { value = everCalibrated && !dismissedForLoss ? 1 : 0 }
+                else if case .display = rule.scope, let latest, !connectedDisplays.isEmpty,
+                        connectedDisplays.allSatisfy({ displayCalibrationIDs.contains($0.id) }) {
+                    var tracker = ruleDisplayTracking[rule.id] ?? DisplayHeadTracking()
+                    if ruleDisplayCenters[rule.id] != displayTracking.centers {
+                        for (id, center) in displayTracking.centers { tracker.calibrate(id, at: center) }
+                        ruleDisplayCenters[rule.id] = displayTracking.centers
+                    }
+                    values = tracker.coverage(current: latest, displays: connectedDisplays.map(\.id), comfort: parameters.comfort, transition: parameters.transition)
+                    ruleDisplayTracking[rule.id] = tracker; value = values.values.max() ?? 0
+                } else {
+                    var response = ruleHeadResponses[rule.id] ?? ShieldResponse()
+                    response.comfort = parameters.comfort; response.transition = parameters.transition
+                    value = response.coverage(angle: offset.angle); ruleHeadResponses[rule.id] = response
+                }
+            }
+            events.append(.headRuleCoverage(rule.id, coverage: value, displays: values, calibrated: isCalibrated, direction: direction))
+        }
+        return events
+    }
+    private func handleRuleShortcut(_ binding: RuleShortcut, pressed: Bool) {
+        guard let coordinator = protectionCoordinator else { return }
+        if binding.operation == .peek { coordinator.send(.peek(binding.ruleID, held: pressed)); return }
+        guard pressed, let rule = coordinator.document.rules.first(where: { $0.id == binding.ruleID }) else { return }
+        if case .region(let ref, _, _) = rule.scope, ref.bundleID == "$selection" { privacy.chooseArea(recipeID: rule.id) }
+        else if case .window(let ref) = rule.scope, ref.bundleID == "$selection" { privacy.chooseWindow(recipeID: rule.id) }
+        else { privacy.ruleSources?.refresh(); coordinator.toggleManual(rule.id) }
+    }
     func shutdown() {
+        shuttingDown = true
+        screenPermissionVerifier.cancel()
+        ruleRegionMarker.close()
+        endRuleRegionSelection()
+        protectionCoordinator?.shutdown()
         updates.shutdown()
         protectionCheck.close()
         nearby.shutdown()

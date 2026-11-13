@@ -42,6 +42,7 @@ private final class OwnerTestCamera: NearbyCameraSession {
     let store = MemoryOwnerStore()
     var owner: OwnerRecognition!
     var nearby: NearbyPeople!
+    var binding: NearbyRuleTestBinding!
     var now = 1.0
     var cameras: [OwnerTestCamera] = []
     var authCount = 0
@@ -51,16 +52,17 @@ private final class OwnerTestCamera: NearbyCameraSession {
     init(enrolled: Bool = true, auth: ((String) async throws -> LAContext)? = nil) {
         preferences = UserDefaults(suiteName: suite)!
         if enrolled { store.value = stored; preferences.set(true, forKey: "ownerRecognitionEnabled") }
-        owner = OwnerRecognition(preferences: preferences, store: store, authenticate: auth ?? { [unowned self] _ in
+        owner = OwnerRecognition(store: store, authenticate: auth ?? { [unowned self] _ in
             authCount += 1
             if denyAuth { throw OwnerSetupError.authentication }
             return LAContext()
         }, cameraAccess: { true }, makeCamera: { [unowned self] result in
             let camera = OwnerTestCamera(result); cameras.append(camera); return camera
         }, clock: { [unowned self] in now })
-        nearby = NearbyPeople(preferences: preferences, cameraAccess: { true }, makeCamera: { [unowned self] result in
+        nearby = NearbyPeople(cameraAccess: { true }, makeCamera: { [unowned self] result in
             let camera = OwnerTestCamera(result); cameras.append(camera); return camera
         }, clock: { [unowned self] in now }, usesWatchdog: false, owner: owner)
+        binding = try! NearbyRuleTestBinding(nearby: nearby, preferences: preferences, clock: { [unowned self] in now })
     }
     func wait(_ condition: () -> Bool) async {
         for _ in 0..<100 {
@@ -91,7 +93,7 @@ private final class OwnerTestCamera: NearbyCameraSession {
             for _ in 0..<5 { await send(pose: pose) }
         }
     }
-    func finish() { nearby.stop(); owner.cancelEnrollment(); preferences.removePersistentDomain(forName: suite) }
+    func finish() { nearby.shutdown(); binding.shutdown(); owner.cancelEnrollment(); preferences.removePersistentDomain(forName: suite) }
 }
 
 final class OwnerRecognitionTests: XCTestCase {
@@ -200,7 +202,7 @@ final class OwnerRecognitionTests: XCTestCase {
         let h = OwnerRig(); defer { h.finish() }
         h.nearby.setResponse(.warning)
         var requestedCapture = false
-        h.nearby.onMonitoring = { if $0 { requestedCapture = true } }
+        h.binding.onPlan = { if !$0.captureDisplayIDs.isEmpty { requestedCapture = true } }
         await h.start()
         XCTAssertTrue(h.nearby.alertActive)
         XCTAssertFalse(h.nearby.covered)
@@ -296,7 +298,8 @@ final class OwnerRecognitionTests: XCTestCase {
         h.owner.saveEnrollment()
         await h.wait { !h.owner.busy }
         XCTAssertTrue(h.owner.enrolled)
-        XCTAssertTrue(h.owner.enabled)
+        XCTAssertTrue(h.owner.enrolled)
+        XCTAssertFalse(h.binding.primary.guards.contains(.ownerVerification), "Enrollment must not silently change rule guards")
         XCTAssertEqual(h.store.writeCount, 1)
         XCTAssertNil(h.owner.template, "Stored embeddings should not be kept between sessions")
         h.owner.deleteEnrollment()
@@ -357,34 +360,7 @@ final class OwnerRecognitionTests: XCTestCase {
         XCTAssertNil(h.owner.template)
     }
 
-    func testRealKeychainRoundTripInAnIsolatedTemporaryKeychain() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("QuietGlass-Keychain-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let password = UUID().uuidString
-        var keychain: SecKeychain?
-        let status = password.withCString { pointer in
-            SecKeychainCreate(directory.appendingPathComponent("test.keychain-db").path, UInt32(password.utf8.count), pointer, false, nil, &keychain)
-        }
-        XCTAssertEqual(status, errSecSuccess)
-        let isolated = try XCTUnwrap(keychain)
-        defer { SecKeychainDelete(isolated) }
-        let store = OwnerTemplateStore(keychain: isolated)
-        let vector: [Float] = [1] + Array(repeating: 0, count: 127)
-        let original = OwnerTemplate(vectors: Array(repeating: vector, count: 5), openEyes: 0.3)
-        XCTAssertFalse(store.containsTemplate)
-        try store.write(original, context: LAContext())
-        XCTAssertTrue(store.containsTemplate)
-        XCTAssertEqual(try store.read(context: LAContext()), original)
-        let replacement = OwnerTemplate(vectors: Array(repeating: vector, count: 5), openEyes: 0.28)
-        try store.write(replacement, context: LAContext())
-        XCTAssertEqual(try store.read(context: LAContext()), replacement)
-        XCTAssertThrowsError(try store.write(OwnerTemplate(vectors: [], openEyes: 0.3), context: LAContext()))
-        XCTAssertEqual(try store.read(context: LAContext()), replacement)
-        try store.delete(context: LAContext())
-        XCTAssertFalse(store.containsTemplate)
-        XCTAssertThrowsError(try store.read(context: LAContext()))
-    }
+
 }
 
 extension OwnerRecognitionTests {

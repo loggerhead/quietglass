@@ -15,12 +15,12 @@ private final class HintPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-private final class NotchState: ObservableObject {
+final class NotchState: ObservableObject {
     @Published var expanded = false
     @Published var edge: NotchEdge = .bottom
 }
 
-private enum NotchAction { case tracking, recenter, preview, area }
+enum NotchAction: CaseIterable { case automaticDetection, settings, area }
 
 @MainActor
 final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
@@ -29,14 +29,12 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
     private let panel: NotchPanel
     private let hintPanel: HintPanel
     private let nearbyPanel: HintPanel
-    private let nearbySound = NearbyNoticeSound()
     private var nearbyObservation: AnyCancellable?
     private let contextPanel: NotchPanel
     private let menuState = NotchMenuState()
     private let canvas = NSView()
     private var hostedBar: NSView!
     private let popover = NSPopover()
-    private weak var profilePicker: ProfilePickerController?
     private var screenObserver: NSObjectProtocol?
     private var controlsResizeObserver: NSObjectProtocol?
     private var workspaceObservers: [NSObjectProtocol] = []
@@ -99,8 +97,7 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
         popover.appearance = NSAppearance(named: .darkAqua)
         popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         popover.contentViewController = NSHostingController(rootView: NotchControlsView(
-            model: model, close: { [weak self] in self?.closeControls() },
-            preview: { [weak self] in self?.preview() }))
+            model: model, close: { [weak self] in self?.closeControls() }))
         controlsResizeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification, object: nil, queue: .main
         ) { [weak self] notification in
@@ -111,11 +108,10 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
             }
         }
 
-        let preferences = UserDefaults.standard
-        if preferences.bool(forKey: "notchUsesCustomPosition"), preferences.object(forKey: "notchAnchorX") != nil {
+        if model.presentationPreference("notchUsesCustomPosition") as? Bool == true, model.presentationPreference("notchAnchorX") != nil {
             followsDock = false
-            state.edge = NotchEdge(rawValue: preferences.string(forKey: "notchDockEdge") ?? "floating") ?? .floating
-            anchor = NSPoint(x: preferences.double(forKey: "notchAnchorX"), y: preferences.double(forKey: "notchAnchorY"))
+            state.edge = NotchEdge(rawValue: model.presentationPreference("notchDockEdge") as? String ?? "floating") ?? .floating
+            anchor = NSPoint(x: model.presentationPreference("notchAnchorX") as? Double ?? 0, y: model.presentationPreference("notchAnchorY") as? Double ?? 0)
             constrainToScreen()
         } else { resetPosition() }
         screenObserver = NotificationCenter.default.addObserver(
@@ -194,6 +190,7 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
         setExpanded(false)
         panel.orderOut(nil)
         nearbyPanel.orderOut(nil)
+        model.protectionCoordinator?.warnings.visible = false
     }
 
     private func hover(_ entered: Bool) {
@@ -201,7 +198,7 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
         if entered {
             setExpanded(true)
             let position = state.edge.isVertical ? anchor.y + 24 - NSEvent.mouseLocation.y : NSEvent.mouseLocation.x - anchor.x + 24
-            showHint(position < 50 ? .tracking : position < 84 ? .recenter : position < 118 ? .preview : .area)
+            showHint(position < 50 ? .automaticDetection : position < 84 ? .settings : .area)
         }
         else { scheduleCollapse() }
     }
@@ -210,7 +207,7 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
         collapseTask?.cancel()
         collapseTask = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: 120_000_000) } catch { return }
-            guard let self, !self.popover.isShown, self.profilePicker?.isVisible != true,
+            guard let self, !self.popover.isShown,
                   !self.contextMenuOpen, self.dragOrigin == nil,
                   !self.panel.frame.contains(NSEvent.mouseLocation) else { return }
             self.showHint(nil)
@@ -240,10 +237,10 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
     private func layoutPanel(animated: Bool = false) {
         let frame: NSRect
         if orientationTransition {
-            frame = NotchDocking.frame(anchor: anchor, vertical: false, expanded: true)
-                .union(NotchDocking.frame(anchor: anchor, vertical: true, expanded: true))
+            frame = NotchDocking.frame(anchor: anchor, vertical: false, expanded: true, controlCount: 3)
+                .union(NotchDocking.frame(anchor: anchor, vertical: true, expanded: true, controlCount: 3))
         } else {
-            frame = NotchDocking.frame(anchor: anchor, vertical: state.edge.isVertical, expanded: usesExpandedBounds)
+            frame = NotchDocking.frame(anchor: anchor, vertical: state.edge.isVertical, expanded: usesExpandedBounds, controlCount: 3)
         }
         if animated, panel.isVisible, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             NSAnimationContext.runAnimationGroup { context in
@@ -260,12 +257,10 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
 
     private func updateNearbyNotice() {
         defer {
-            nearbySound.update(needsAttention: model.nearby.needsAttention || model.nearbyBlurUnavailable,
-                               visible: nearbyPanel.isVisible,
-                               enabled: model.nearby.warningSoundEnabled)
+            model.protectionCoordinator?.warnings.visible = nearbyPanel.isVisible
         }
         guard model.nearbyNeedsAttention, panel.isVisible, !state.expanded,
-              !popover.isShown, !contextMenuOpen, profilePicker?.isVisible != true else {
+              !popover.isShown, !contextMenuOpen else {
             nearbyPanel.orderOut(nil)
             return
         }
@@ -293,19 +288,14 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
         guard ProcessInfo.processInfo.systemUptime - lastDragEnded > 0.2 else { return }
         guard state.expanded else { hover(true); return }
         switch action {
-        case .tracking:
-            if model.notchClearsProtection { model.dismissShield() }
-            else if model.enabled { model.setEnabled(false) }
-            else if !model.screenPermission || model.status == "Motion permission needed" { showControls() }
-            else { model.setEnabled(true) }
-        case .recenter:
-            if model.canRecenter { model.recenter() } else { showControls() }
-        case .preview:
-            if !model.screenPermission { showControls() } else { preview() }
-        case .area:
+        case .automaticDetection: model.setAutomaticDetection(!model.automaticDetectionEnabled)
+        case .settings:
             closeControls()
             showHint(nil)
-            model.privacy.chooseArea()
+            model.onOpenPrivacySettings?()
+            return
+        case .area:
+            showControls(areaOptions: true)
             return
         }
         showHint(action)
@@ -351,7 +341,7 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
     private func showHint(_ action: NotchAction?) {
         hintGeneration += 1
         let generation = hintGeneration
-        guard let action, state.expanded, !popover.isShown, profilePicker?.isVisible != true,
+        guard let action, state.expanded, !popover.isShown,
               !contextMenuOpen, dragOrigin == nil else {
             hintedAction = nil
             guard hintPanel.isVisible else { return }
@@ -374,7 +364,7 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
         let view = NSHostingView(rootView: NotchHintView(model: model, action: action))
         let size = view.fittingSize
         hintPanel.contentView = view
-        let offset: CGFloat = action == .tracking ? 0 : action == .recenter ? 43 : action == .preview ? 77 : 111
+        let offset: CGFloat = action == .automaticDetection ? 0 : action == .settings ? 43 : 77
         var x = anchor.x + offset - size.width / 2
         let visible = popupBounds()
         x = min(max(x, visible.minX + 8), visible.maxX - size.width - 8)
@@ -392,16 +382,17 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
         }
     }
 
-    func showControls() {
-        profilePicker?.hide()
+    func showControls(areaOptions: Bool = false) {
         closeContextMenu()
         show()
         setExpanded(true)
         showHint(nil)
         guard !popover.isShown, let content = panel.contentView else { return }
+        popover.contentViewController = NSHostingController(rootView: NotchControlsView(
+            model: model, areaOptions: areaOptions, close: { [weak self] in self?.closeControls() }))
         popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let edge: NSRectEdge = state.edge == .left ? .maxX : state.edge == .right ? .minX : .maxY
-        let controls = NotchDocking.frame(anchor: anchor, vertical: state.edge.isVertical, expanded: true)
+        let controls = NotchDocking.frame(anchor: anchor, vertical: state.edge.isVertical, expanded: true, controlCount: 3)
         let attachment: NSPoint
         switch state.edge {
         case .left: attachment = NSPoint(x: controls.maxX, y: controls.midY)
@@ -418,7 +409,7 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
 
     private func positionControls() {
         guard popover.isShown, let window = popover.contentViewController?.view.window else { return }
-        let controls = NotchDocking.frame(anchor: anchor, vertical: state.edge.isVertical, expanded: true)
+        let controls = NotchDocking.frame(anchor: anchor, vertical: state.edge.isVertical, expanded: true, controlCount: 3)
         let visible = popupBounds()
         var origin = window.frame.origin
         switch state.edge {
@@ -433,41 +424,15 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
         if window.frame.origin != origin { window.setFrameOrigin(origin) }
     }
 
-    func showProfiles(_ picker: ProfilePickerController) {
-        closeControls()
-        show()
-        setExpanded(true)
-        showHint(nil)
-        collapseTask?.cancel()
-        picker.show(relativeTo: canvas, fromControls: true, placement: { [weak self] size in
-            guard let self else { return .zero }
-            let controls = NotchDocking.frame(anchor: self.anchor, vertical: self.state.edge.isVertical, expanded: true)
-            return NotchDocking.popupFrame(size: size, controls: controls, edge: self.state.edge, in: self.popupBounds())
-        }, onDismiss: { [weak self] in
-            self?.profilePicker = nil
-            self?.scheduleCollapse()
-        })
-        profilePicker = picker
-    }
-
-    func closeControls() { profilePicker?.hide(); popover.close(); closeContextMenu() }
-
-    func preview() {
-        closeControls()
-        showHint(nil)
-        if model.previewing { model.dismissShield() } else { model.previewShield() }
-    }
+    func closeControls() { popover.close(); closeContextMenu() }
 
     func resetPosition() {
-        closeControls()
-        followsDock = true
-        setDockEdge(.bottom)
-        refreshDockPosition(animated: panel.isVisible)
-        savePosition()
+        closeControls(); followsDock = true; setDockEdge(.bottom)
+        refreshDockPosition(animated: panel.isVisible); savePosition()
     }
 
     private func refreshDockPosition(animated: Bool) {
-        guard followsDock, dragOrigin == nil, !popover.isShown, profilePicker?.isVisible != true, !contextMenuOpen,
+        guard followsDock, dragOrigin == nil, !popover.isShown, !contextMenuOpen,
               let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
         let bottom = visibleDockTop(on: screen)
         let target = NSPoint(x: screen.frame.midX, y: bottom + 20)
@@ -504,10 +469,10 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
     }
 
     private func savePosition() {
-        UserDefaults.standard.set(!followsDock, forKey: "notchUsesCustomPosition")
-        UserDefaults.standard.set(anchor.x, forKey: "notchAnchorX")
-        UserDefaults.standard.set(anchor.y, forKey: "notchAnchorY")
-        UserDefaults.standard.set(state.edge.rawValue, forKey: "notchDockEdge")
+        model.setPresentationPreference("notchUsesCustomPosition", !followsDock)
+        model.setPresentationPreference("notchAnchorX", anchor.x)
+        model.setPresentationPreference("notchAnchorY", anchor.y)
+        model.setPresentationPreference("notchDockEdge", state.edge.rawValue)
     }
 
     private func showContextMenu() {
@@ -541,7 +506,7 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
 
     private func handleMenuKey(_ code: UInt16) -> Bool {
         if code == 53 { closeContextMenu(); return true }
-        let items = NotchMenuAction.allCases.filter { $0 != .recenter || model.canRecenter }
+        let items = NotchMenuAction.allCases
         if code == 125 || code == 126 {
             let step = code == 125 ? 1 : -1
             let index = menuState.highlighted.flatMap { items.firstIndex(of: $0) } ?? (step == 1 ? -1 : 0)
@@ -560,13 +525,19 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
         switch action {
         case .snooze: snooze()
         case .controls: showControls()
+        case .protection: model.onOpenProtection?()
+        case .rules: model.onOpenRules?()
         case .settings: model.onOpenPrivacySettings?()
         case .resetPosition: resetPosition()
-        case .tracking: perform(.tracking)
-        case .recenter: if model.canRecenter { model.recenter() }
-        case .preview: perform(.preview)
+        case .screen: model.toggleInstantShield()
+        case .area: model.privacy.chooseArea()
+        case .window: model.privacy.chooseWindow()
+        case .focus: model.setFocus(!model.privacy.focusEnabled)
+        case .pause: model.protectionCoordinator?.pause()
+        case .resume: model.protectionCoordinator?.resume()
         case .clear: model.dismissShield()
         }
+
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -575,7 +546,7 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
 
     func popoverDidShow(_ notification: Notification) { positionControls() }
 
-    func popoverDidClose(_ notification: Notification) { model.recordingShortcut = false; scheduleCollapse() }
+    func popoverDidClose(_ notification: Notification) { scheduleCollapse() }
 
     private func snooze() {
         hide()
@@ -630,11 +601,11 @@ struct NearbyNoticeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(QG("%@. %@", QG(model.nearbyNoticeTitle), QG(model.nearbyNoticeDetail)))
-        .accessibilityHint("Open Nearby people settings")
+        .accessibilityHint(QG("Open rules"))
     }
 }
 
-private struct NotchBarView: View {
+struct NotchBarView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var state: NotchState
     let hover: (Bool) -> Void
@@ -647,22 +618,16 @@ private struct NotchBarView: View {
             control(.area, icon: .area)
                 .scaleEffect(state.expanded ? 1 : 0.45)
                 .opacity(state.expanded ? 1 : 0)
-                .position(controlCenter(111, resting: 24))
-                .allowsHitTesting(state.expanded)
-                .accessibilityHidden(!state.expanded)
-            control(.preview, icon: model.previewing ? .cancel : .viewOff)
-                .scaleEffect(state.expanded ? 1 : 0.45)
-                .opacity(state.expanded ? 1 : 0)
                 .position(controlCenter(77, resting: 20))
                 .allowsHitTesting(state.expanded)
                 .accessibilityHidden(!state.expanded)
-            control(.recenter, icon: .focus)
+            control(.settings, icon: .settings)
                 .scaleEffect(state.expanded ? 1 : 0.45)
                 .opacity(state.expanded ? 1 : 0)
                 .position(controlCenter(43, resting: 10))
                 .allowsHitTesting(state.expanded)
                 .accessibilityHidden(!state.expanded)
-            control(.tracking, icon: model.notchClearsProtection ? .cancel : model.enabled ? .pause : .view)
+            control(.automaticDetection, icon: .view)
                 .position(x: 24, y: 24)
         }
         .frame(width: 150, height: 150, alignment: .topLeading)
@@ -680,25 +645,33 @@ private struct NotchBarView: View {
     }
 
     private func control(_ item: NotchAction, icon: AppIcon) -> some View {
-        let primary = item == .tracking
+        let primary = item == .automaticDetection
         let vertical = state.edge.isVertical
         let width: CGFloat = primary && !vertical ? 48 : 30
         let height: CGFloat = primary && vertical ? 48 : 30
-        return Button { action(item) } label: {
-            ZStack {
-                Capsule()
-                    .fill(primary && !state.expanded && model.nearbyNeedsAttention ? Color.orange : Color.black)
-                    .frame(width: primary && !state.expanded ? (vertical ? 8 : 40) : width,
-                           height: primary && !state.expanded ? (vertical ? 40 : 8) : height)
-                AppIconView(icon: icon, size: 18)
-                    .foregroundStyle(primary && model.nearbyNeedsAttention ? Color.orange : .white)
-                    .opacity(state.expanded ? 1 : 0)
-                    .scaleEffect(state.expanded ? 1 : 0.7)
+        let content = ZStack {
+            Capsule()
+                .fill(primary && !state.expanded && model.nearbyNeedsAttention ? Color.orange : Color.black)
+                .frame(width: primary && !state.expanded ? (vertical ? 8 : 40) : width,
+                       height: primary && !state.expanded ? (vertical ? 40 : 8) : height)
+            AppIconView(icon: icon, size: 18)
+                .foregroundStyle(primary && model.automaticDetectionEnabled ? Color.green : primary && model.nearbyNeedsAttention ? Color.orange : .white)
+                .opacity(state.expanded ? 1 : 0)
+                .scaleEffect(state.expanded ? 1 : 0.7)
+        }
+        .frame(width: width, height: height)
+        .contentShape(Capsule())
+        return Group {
+            if primary {
+                Toggle(isOn: Binding(get: { model.automaticDetectionEnabled }, set: { _ in action(item) })) {
+                    content
+                }.toggleStyle(.button)
+            } else {
+                Button { action(item) } label: { content }
             }
-            .frame(width: width, height: height)
-            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityValue(primary ? QG(model.automaticDetectionEnabled ? "On" : "Off") : "")
         .accessibilityLabel(QG(primary && !state.expanded ? (model.nearbyNeedsAttention ? QG(model.nearbyNoticeTitle) : "QuietGlass notch") : label(item)))
         .accessibilityHint(QG(primary && !state.expanded ? "Hover to reveal controls, or right-click for settings" : ""))
         .onHover { hint($0 && state.expanded ? item : nil) }
@@ -706,17 +679,9 @@ private struct NotchBarView: View {
 
     private func label(_ item: NotchAction) -> String {
         switch item {
-        case .tracking:
-            if model.privacy.fullScreen || model.privacy.focusEnabled { return "Clear privacy shield" }
-            if model.nearby.wantsMonitoring { return "Stop Nearby people" }
-            if model.previewing { return "Clear preview" }
-            if model.enabled { return "Pause tracking" }
-            if !model.screenPermission { return model.screenAccessAction }
-            if model.status == "Motion permission needed" { return "Allow AirPods motion" }
-            return "Start tracking"
-        case .recenter: return "Recenter"
-        case .preview: return model.previewing ? "Clear preview" : "Preview blur"
-        case .area: return "Blur an area"
+        case .automaticDetection: return "Automatic detection"
+        case .settings: return "Settings"
+        case .area: return "Choose content…"
         }
     }
 }
@@ -728,11 +693,8 @@ private struct NotchHintView: View {
     var body: some View {
         HStack(spacing: 5) {
             Text(QG(label))
-            if action == .recenter {
-                Text(model.shortcutLabel).foregroundStyle(Color(red: 0.94, green: 0.68, blue: 0.91))
-            }
-            if action == .area, model.areaShortcutError == nil {
-                Text(model.areaShortcutLabel).foregroundStyle(Color(red: 0.94, green: 0.68, blue: 0.91))
+            if action == .automaticDetection {
+                Text(QG(model.automaticDetectionEnabled ? "On" : "Off")).foregroundStyle(model.automaticDetectionEnabled ? .green : .secondary)
             }
         }
         .font(.system(size: 13))
@@ -745,203 +707,111 @@ private struct NotchHintView: View {
 
     private var label: String {
         switch action {
-        case .tracking:
-            if model.privacy.fullScreen || model.privacy.focusEnabled { return "Clear privacy shield" }
-            if model.nearby.wantsMonitoring { return "Stop Nearby people" }
-            if model.previewing { return "Clear preview" }
-            if model.enabled { return "Pause tracking" }
-            if !model.screenPermission { return model.screenAccessAction }
-            if model.status == "Motion permission needed" { return "Allow AirPods motion" }
-            return "Start tracking"
-        case .recenter: return "Recenter"
-        case .preview: return model.previewing ? "Clear preview" : "Preview blur"
-        case .area: return "Blur an area"
+        case .automaticDetection: return "Automatic detection"
+        case .settings: return "Settings"
+        case .area: return "Choose content…"
         }
     }
 }
 
-private struct NotchControlsView: View {
+struct NotchControlsView: View {
+    @ObservedObject var model: AppModel
+    @State private var areaOptions: Bool
+    let close: () -> Void
+
+    init(model: AppModel, areaOptions: Bool = false, close: @escaping () -> Void) {
+        self.model = model
+        _areaOptions = State(initialValue: areaOptions)
+        self.close = close
+    }
+
+    var body: some View {
+        Group {
+            if areaOptions {
+                NotchAreaOptionsView(model: model, close: close)
+            } else { statusControls }
+        }
+        .padding(16).frame(width: 340).fixedSize(horizontal: false, vertical: true)
+        .font(.system(size: 13)).foregroundStyle(RulePalette.text).tint(RulePalette.accent)
+        .background(RulePalette.background).preferredColorScheme(.dark).buttonStyle(RuleButtonStyle())
+        .disclosureGroupStyle(RuleDisclosureStyle())
+        .toggleStyle(RuleToggleStyle())
+    }
+
+    private var statusControls: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text(QG("Current protection")).font(.headline)
+                Spacer()
+                Button(QG("Close"), action: close).buttonStyle(RuleButtonStyle(tone: .quiet))
+            }
+            RuleSettingRow(title: "Automatic detection", detail: "Changes only the currently active automatic setups.") {
+                Toggle(QG("Automatic detection"), isOn: Binding(get: { model.automaticDetectionEnabled }, set: model.setAutomaticDetection))
+                    .labelsHidden().toggleStyle(RuleToggleStyle(showsLabel: false))
+            }
+            Text(QG(model.status)).font(.system(size: 12)).foregroundStyle(RulePalette.secondary).lineLimit(3)
+            if let coordinator = model.protectionCoordinator {
+                if !coordinator.plan.activeRules.isEmpty || !coordinator.plan.warnings.isEmpty {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(coordinator.plan.activeRules) { active in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(QG(active.name)).font(.headline)
+                                    Text(QG(active.reason.title)).font(.caption)
+                                    DisclosureGroup(QG("Rule details")) {
+                                        Text(QG("Rule ID: %@", active.id.uuidString)).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
+                                    }.font(.system(size: 11)).foregroundStyle(RulePalette.secondary)
+                                }
+                            }
+                            ForEach(coordinator.plan.warnings) { warning in
+                                HStack {
+                                    Text(QG(warning.rule.name)).font(.caption)
+                                    Spacer()
+                                    Button(QG("Blur now")) { coordinator.blurNow(warning.id) }
+                                }
+                            }
+                        }
+                    }.frame(maxHeight: 220)
+                }
+                HStack {
+                    Button(QG("Blur all displays")) { model.toggleInstantShield() }
+                    Button(QG("Choose content…")) { areaOptions = true }
+                }
+                HStack {
+                    Button(QG("Blur one window")) { close(); model.privacy.chooseWindow() }
+                    Button(QG("Focus on this window")) { model.setFocus(!model.privacy.focusEnabled) }
+                }
+                HStack {
+                    Button(QG("Clear")) { model.dismissShield() }
+                    Button(QG("Pause")) { coordinator.pause() }
+                    Button(QG("Resume")) { coordinator.resume() }
+                }
+            }
+            Divider()
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
+                Button(QG("Screen controls")) { close(); model.onOpenProtection?() }
+                Button(QG("Auto & shortcuts")) { close(); model.onOpenRules?() }
+                Button(QG("Settings")) { close(); model.onOpenPrivacySettings?() }
+            }
+        }
+    }
+}
+
+struct NotchAreaOptionsView: View {
     @ObservedObject var model: AppModel
     let close: () -> Void
-    let preview: () -> Void
-    @State private var advanced = false
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("QuietGlass").font(.system(size: 13, weight: .semibold))
+                Text(QG("Choose what to protect")).font(.system(size: 15, weight: .semibold))
                 Spacer()
-                CloseControlsButton(action: close).frame(width: 28, height: 28)
-            }
-            Text(hint).font(.system(size: 11)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 8) {
-                Button(QG(model.enabled ? "Pause" : "Start")) { model.setEnabled(!model.enabled) }
-                    .buttonStyle(QuietGlassButtonStyle())
-                Button("Recenter") { model.recenter() }
-                    .buttonStyle(QuietGlassButtonStyle()).disabled(!model.canRecenter)
-                Spacer()
-                if model.connected {
-                    Image(systemName: model.trackingSource == .camera ? "camera" : "airpodspro")
-                        .font(.system(size: 18, weight: .regular))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(.white)
-                        .accessibilityLabel(QG(model.trackingSource == .camera ? "Camera tracking" : "AirPods connected"))
-                }
-            }
-
-            if !model.screenPermission {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(QG(model.screenAccessPreviouslyGranted
-                         ? "macOS needs screen access restored for this copy of QuietGlass. Enable it in Screen Settings, then restart the app."
-                         : "Allow QuietGlass in Screen Recording, then restart the app if macOS asks."))
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 8) {
-                        Button("Screen Settings") { model.requestScreenPermission() }
-                        Button(QG(model.restarting ? "Restarting…" : "Restart QuietGlass")) { model.restartForScreenPermission() }
-                            .disabled(model.restarting)
-                    }.buttonStyle(QuietGlassButtonStyle()).controlSize(.small)
-                }
-            }
-            if model.status == "Motion permission needed" {
-                Button("Open Motion Settings") { model.openMotionSettings() }.buttonStyle(QuietGlassButtonStyle())
-            }
-            if let notice = model.captureNotice {
-                Text(QG(notice)).font(.system(size: 10)).foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let notice = model.privacy.notice {
-                Text(QG(notice)).font(.system(size: 10)).foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Divider().overlay(.white.opacity(0.06))
-            HStack(spacing: 10) {
-                    Image(systemName: model.currentProfile?.symbol ?? "square.stack.3d.up")
-                        .font(.system(size: 13, weight: .medium))
-                        .frame(width: 28, height: 28)
-                        .background(.white.opacity(0.10), in: Circle())
-                        .accessibilityHidden(true)
-                    Text("Profile").font(.system(size: 13, weight: .medium))
-                    Spacer()
-                    Text(QG(model.currentProfile?.title ?? "Custom")).font(.system(size: 12)).foregroundStyle(.secondary)
-                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary)
-                        .accessibilityHidden(true)
-                }
-                .frame(height: 34)
-                .contentShape(Rectangle())
-                .accessibilityHidden(true)
-                .overlay(ProfilePickerTrigger(model: model, fromControls: true))
-            adjustment("Blur strength", value: $model.blur, range: 10...70, suffix: "")
-            adjustment("Start blurring", value: $model.comfort, range: 2...30, suffix: "°")
-
-            Button { advanced.toggle() } label: {
-                HStack(spacing: 5) {
-                    AppIconView(icon: .chevronDown, size: 12).rotationEffect(.degrees(advanced ? 0 : -90))
-                    Text("More")
-                    Spacer()
-                }.contentShape(Rectangle())
-            }
-            .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
-            .accessibilityLabel(QG(advanced ? "Hide more controls" : "Show more controls"))
-            if advanced {
-                VStack(spacing: 10) {
-                    adjustment("Transition", value: $model.transition, range: 5...30, suffix: "°")
-                    HStack {
-                        Text("Recenter").font(.system(size: 11)).foregroundStyle(.secondary)
-                        Spacer()
-                        Button(QG(model.recordingShortcut ? "Press keys…" : model.shortcutLabel)) {
-                            model.recordingShortcut.toggle()
-                        }
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(Color(red: 0.94, green: 0.68, blue: 0.91))
-                    }
-                    if let error = model.shortcutError {
-                        Text(QG(error)).font(.system(size: 10)).foregroundStyle(.orange)
-                    }
-                }
-            }
-
-            HStack {
-                Button(action: preview) {
-                    HStack(spacing: 5) {
-                        AppIconView(icon: model.previewing ? .cancel : .play, size: 14)
-                        Text(QG(model.previewing ? "Clear preview" : "Preview blur"))
-                    }
-                }.buttonStyle(.plain).font(.system(size: 11))
-                Spacer()
-                HStack(spacing: 3) {
-                    Text("esc").foregroundStyle(Color(red: 0.94, green: 0.68, blue: 0.91))
-                    Text("to clear").foregroundStyle(.tertiary)
-                }.font(.system(size: 10))
-            }
-            Button("Settings…") {
-                close()
-                model.onOpenPrivacySettings?()
-            }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
+                Button(QG("Close"), action: close).buttonStyle(RuleButtonStyle(tone: .quiet))
+            }.padding(.bottom, 6)
+            RuleActionTile(title: "Blur part of a window", detail: "Drag over an area inside your current window.", icon: "crop") { close(); model.privacy.chooseArea() }
+            RuleActionTile(title: "Blur one window", detail: "Choose a window and hide its contents.", icon: "macwindow") { close(); model.privacy.chooseWindow() }
+            RuleActionTile(title: "Blur all displays", detail: "Hide content on every display; click again to remove this blur.", icon: "eye.slash") { close(); model.toggleInstantShield() }
+            RuleActionTile(title: "Focus on this window", detail: "Keep the current window clear and blur everything around it.", icon: "viewfinder") { close(); model.setFocus(!model.privacy.focusEnabled) }
         }
-        .padding(16)
-        .frame(width: 276)
-        .fixedSize(horizontal: false, vertical: true)
-        .preferredColorScheme(.dark)
-        .buttonStyle(QuietGlassButtonStyle())
-        .tint(Color(red: 0.76, green: 0.74, blue: 0.93))
-    }
-
-    private var hint: String {
-        if model.privacy.fullScreen || model.privacy.focusEnabled || model.nearby.enabled { return QG("%@. Press Escape to clear it.", QG(model.status)) }
-        if model.status == "Motion permission needed" { return QG("Allow AirPods motion to start.") }
-        if !model.screenPermission { return QG("Allow screen access for the blur effect.") }
-        if model.previewing { return QG("Preview clears after five seconds. Click again or press Escape to clear sooner.") }
-        if model.trackingSource == .camera { return model.enabled ? QG(model.cameraTracking.message) : QG("Face your screen, then tap Start to calibrate the camera.") }
-        if !model.enabled { return QG("Put on your AirPods, then tap Start.") }
-        if !model.connected { return QG("Waiting for your AirPods to connect…") }
-        if !model.calibrated { return QG("Face your screen, then tap Recenter.") }
-        return QG(model.status)
-    }
-
-    private func adjustment(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String) -> some View {
-        VStack(spacing: 2) {
-            HStack {
-                Text(QG(title))
-                Spacer()
-                Text("\(Int(value.wrappedValue))\(suffix)").monospacedDigit().foregroundStyle(.secondary)
-            }.font(.system(size: 11))
-            Slider(value: value, in: range, step: 1).controlSize(.small).accessibilityLabel(QG(title))
-        }
-    }
-}
-
-private final class FirstClickCloseButton: NSButton {
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-}
-
-private struct CloseControlsButton: NSViewRepresentable {
-    let action: () -> Void
-
-    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
-
-    func makeNSView(context: Context) -> NSButton {
-        let button = FirstClickCloseButton()
-        button.title = ""
-        button.image = AppIcon.cancel.image(size: 14)
-        button.imagePosition = .imageOnly
-        button.contentTintColor = .secondaryLabelColor
-        button.isBordered = false
-        button.setButtonType(.momentaryChange)
-        button.target = context.coordinator
-        button.action = #selector(Coordinator.close)
-        button.setAccessibilityLabel(QG("Close controls"))
-        button.toolTip = QG("Close controls")
-        return button
-    }
-
-    func updateNSView(_ button: NSButton, context: Context) { context.coordinator.action = action }
-
-    final class Coordinator: NSObject {
-        var action: () -> Void
-        init(action: @escaping () -> Void) { self.action = action }
-        @objc func close() { action() }
     }
 }

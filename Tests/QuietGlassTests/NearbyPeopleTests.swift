@@ -25,6 +25,8 @@ private final class FakeFaceCamera: NearbyCameraSession {
     var coverChanges: [Bool] = []
     var monitorChanges: [Bool] = []
     var nearby: NearbyPeople!
+    var binding: NearbyRuleTestBinding!
+    private var lastCovered = false, lastMonitoring = false
     let access: () async -> Bool
 
     init(access: @escaping () async -> Bool = { true }) {
@@ -34,17 +36,22 @@ private final class FakeFaceCamera: NearbyCameraSession {
     }
 
     func createNearby() {
-        nearby = NearbyPeople(preferences: UserDefaults(suiteName: suite)!, cameraAccess: access, makeCamera: { [unowned self] completion in
+        nearby = NearbyPeople(cameraAccess: access, makeCamera: { [unowned self] completion in
             let camera = FakeFaceCamera(completion)
             cameras.append(camera)
             return camera
         }, clock: { [unowned self] in now }, wallClock: { [unowned self] in Date(timeIntervalSince1970: now + wallOffset) }, usesWatchdog: false)
-        nearby.onCoverage = { [unowned self] in coverChanges.append($0) }
-        nearby.onMonitoring = { [unowned self] in monitorChanges.append($0) }
+        binding = try! NearbyRuleTestBinding(nearby: nearby, preferences: preferences,
+            clock: { [unowned self] in now }, wallClock: { [unowned self] in Date(timeIntervalSince1970: now + wallOffset) }, runsTimer: true)
+        binding.onPlan = { [unowned self] plan in
+            let covered = plan.hasProtection, monitoring = !plan.captureDisplayIDs.isEmpty || covered
+            if covered != lastCovered { coverChanges.append(covered); lastCovered = covered }
+            if monitoring != lastMonitoring { monitorChanges.append(monitoring); lastMonitoring = monitoring }
+        }
     }
 
     func relaunch() {
-        nearby.shutdown()
+        nearby.shutdown(); binding.shutdown()
         createNearby()
     }
 
@@ -61,7 +68,7 @@ private final class FakeFaceCamera: NearbyCameraSession {
 
     func settle() async { for _ in 0..<10 { await Task.yield() } }
     func finish() {
-        nearby.stop()
+        nearby.shutdown(); binding.shutdown()
         preferences.removePersistentDomain(forName: suite)
     }
 }
@@ -148,7 +155,8 @@ final class NearbyPeopleTests: XCTestCase {
         defer { h.finish() }
         await h.start()
         let reopenedPreferences = UserDefaults(suiteName: h.suite)!
-        XCTAssertTrue(reopenedPreferences.bool(forKey: "nearbyEnabled"))
+        XCTAssertTrue(try! ProtectionStore(storage: reopenedPreferences).loadOrMigrate().rules.contains { if case .extraFace = $0.trigger { return $0.isEnabled }; return false })
+        XCTAssertNil(reopenedPreferences.object(forKey: "nearbyEnabled"))
     }
 
     @MainActor func testCameraIsOffOnLaunchAndStoppingClearsBothSources() {
@@ -161,8 +169,8 @@ final class NearbyPeopleTests: XCTestCase {
         h.nearby.restore()
         XCTAssertTrue(h.cameras.isEmpty)
         h.nearby.stop()
-        XCTAssertEqual(h.coverChanges, [false])
-        XCTAssertEqual(h.monitorChanges, [false])
+        XCTAssertFalse(h.binding.coordinator.plan.hasProtection)
+        XCTAssertTrue(h.binding.coordinator.plan.captureDisplayIDs.isEmpty)
     }
 
     @MainActor func testWarningWaitsBeforeScreenCaptureAndPersistsTheResponse() async {
@@ -177,11 +185,11 @@ final class NearbyPeopleTests: XCTestCase {
         XCTAssertFalse(h.nearby.covered)
         XCTAssertTrue(h.coverChanges.isEmpty)
         XCTAssertTrue(h.monitorChanges.isEmpty)
-        let nextLaunch = NearbyPeople(preferences: h.preferences)
-        XCTAssertEqual(nextLaunch.response, .warning)
-        XCTAssertTrue(nextLaunch.wantsMonitoring)
-        XCTAssertFalse(nextLaunch.enabled)
-        XCTAssertEqual(nextLaunch.status, .off)
+        h.relaunch()
+        XCTAssertEqual(h.nearby.response, .warning)
+        XCTAssertTrue(h.nearby.wantsMonitoring)
+        XCTAssertFalse(h.nearby.enabled)
+        XCTAssertEqual(h.nearby.status, .off)
     }
 
     @MainActor func testUnresolvedWarningBlursAfterTwoMinutesWithoutAnotherCameraFrame() async {
@@ -321,13 +329,13 @@ final class NearbyPeopleTests: XCTestCase {
         XCTAssertEqual(h.cameras.count, 2, "Restoring an active setting must not start another session")
     }
 
-    @MainActor func testExplicitOffAndEscapeStopStayOffAcrossRelaunch() async {
+    @MainActor func testExplicitOffCommandsStayOffAcrossRelaunch() async {
         let h = NearbyHarness()
         defer { h.finish() }
         for useToggle in [true, false] {
             await h.start()
             if useToggle { h.nearby.setEnabled(false) }
-            else { h.nearby.stop() } // AppModel.dismissShield uses this for Escape.
+            else { h.nearby.stop() } // Explicit off command; clearing protection only suspends monitoring.
             let cameraCount = h.cameras.count
             h.relaunch()
             h.nearby.restore()
@@ -349,7 +357,8 @@ final class NearbyPeopleTests: XCTestCase {
         h.nearby.suspend(for: .inactiveSession)
         XCTAssertTrue(original.stopped)
         XCTAssertTrue(h.nearby.wantsMonitoring)
-        XCTAssertTrue(h.preferences.bool(forKey: "nearbyEnabled"))
+        XCTAssertTrue(h.binding.primary.isEnabled)
+        XCTAssertNil(h.preferences.object(forKey: "nearbyEnabled"))
         XCTAssertEqual(h.nearby.status, .paused)
         original.completion(.success(NearbyFaceSample(count: 2, capturedAt: 1)))
         await h.settle()
@@ -568,15 +577,18 @@ final class NearbyPeopleTests: XCTestCase {
         XCTAssertTrue(h.coverChanges.isEmpty)
     }
 
-    @MainActor func testUnavailableEscapeReportsProtectionFailureInsteadOfReady() {
-        let privacy = PrivacyController()
-        defer { privacy.shutdown() }
-        privacy.requestEscape = { false }
-        privacy.setNearbyMonitoring(true)
-        XCTAssertTrue(privacy.captureUnavailable)
-        XCTAssertFalse(privacy.ready)
-        XCTAssertFalse(privacy.nearbyCovered)
-        XCTAssertEqual(privacy.notice, "Escape is unavailable. Protection is paused.")
+    @MainActor func testUnavailableEscapeReportsProtectionFailureInsteadOfReady() throws {
+        let suite = "QuietGlass.EscapeTests.\(UUID())"
+        let prefs = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let coordinator = try ProtectionCoordinator(store: ProtectionStore(storage: prefs), executor: ScreenBlurExecutor(), runsTimer: false)
+        defer { coordinator.shutdown(); prefs.removePersistentDomain(forName: suite) }
+        coordinator.prepareEscape = { false }
+        let rule = ProtectionPreset.nearby.rule()
+        coordinator.prepareRuleBindings = { _ in true }; try coordinator.saveRules([rule])
+        coordinator.send(.nearby(.facingScreen, active: true, ownerVerified: true))
+        XCTAssertFalse(coordinator.escapeAvailable)
+        XCTAssertFalse(coordinator.plan.hasProtection)
+        XCTAssertTrue(coordinator.requiresEscape)
     }
 }
 

@@ -109,6 +109,7 @@ struct OwnerTemplateStore: OwnerTemplateStoring {
 
 @MainActor
 final class OwnerRecognition: ObservableObject {
+    var onTemplateAvailabilityChange: ((Bool) -> Void)?
     @Published private(set) var enabled: Bool
     @Published private(set) var enrolled: Bool
     @Published private(set) var busy = false
@@ -119,7 +120,7 @@ final class OwnerRecognition: ObservableObject {
     @Published private(set) var prompt = "Set up your face"
     @Published private(set) var error: String?
     private(set) var template: OwnerTemplate?
-    private let preferences: UserDefaults
+    private var cameraID = ""
     private let store: OwnerTemplateStoring
     private let authenticate: (String) async throws -> LAContext
     private let cameraAccess: () async -> Bool
@@ -134,16 +135,16 @@ final class OwnerRecognition: ObservableObject {
     private var lastAccepted: TimeInterval = 0
     private var saving = false
 
-    init(preferences: UserDefaults = .standard, store: OwnerTemplateStoring = OwnerTemplateStore(),
+    init(store: OwnerTemplateStoring = OwnerTemplateStore(),
          authenticate: @escaping (String) async throws -> LAContext = OwnerRecognition.authenticateUser,
          cameraAccess: @escaping () async -> Bool = NearbyPeople.requestCameraAccess,
          makeCamera: @escaping (@escaping (Result<NearbyFaceSample, NearbyCameraFailure>) -> Void) -> NearbyCameraSession = { FaceCamera(recognition: true, completion: $0) },
          clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
-        self.preferences = preferences; self.store = store; self.authenticate = authenticate
+        self.store = store; self.authenticate = authenticate
         self.cameraAccess = cameraAccess; self.makeCamera = makeCamera; self.clock = clock
         enrolled = store.containsTemplate
         // Do not silently fall back to count-only when a saved template disappears.
-        enabled = preferences.bool(forKey: "ownerRecognitionEnabled")
+        enabled = false
     }
 
     nonisolated static func authenticateUser(_ reason: String) async throws -> LAContext {
@@ -155,10 +156,11 @@ final class OwnerRecognition: ObservableObject {
         return context
     }
 
-    func setEnabled(_ value: Bool) {
-        guard !busy, !enrolling, !value || enrolled else { return }
+    func configureCamera(_ id: String) { cameraID = id }
+    private func notifyTemplateAvailability(_ available: Bool) { onTemplateAvailabilityChange?(available) }
+    func configureRuleVerification(_ value: Bool) {
+        guard enabled != value else { return }
         enabled = value
-        preferences.set(value, forKey: "ownerRecognitionEnabled")
         template = nil
     }
 
@@ -216,7 +218,7 @@ final class OwnerRecognition: ObservableObject {
                     }
                 }
                 self.camera = camera
-                camera.configureDevice(preferences.string(forKey: CameraSelection.preferenceKey))
+                camera.configureDevice(cameraID)
                 previewSession = camera.previewSession
                 camera.start()
                 let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -265,7 +267,7 @@ final class OwnerRecognition: ObservableObject {
                 guard current == token else { return }
                 enrolled = true
                 enabled = true
-                preferences.set(true, forKey: "ownerRecognitionEnabled")
+                notifyTemplateAvailability(true)
                 cancelEnrollment()
                 prompt = "Your face is saved securely"
             } catch {
@@ -290,7 +292,7 @@ final class OwnerRecognition: ObservableObject {
                 try await Task.detached { try store.delete(context: context) }.value
                 guard current == token else { return }
                 enabled = false; enrolled = false; template = nil; busy = false
-                preferences.set(false, forKey: "ownerRecognitionEnabled")
+                notifyTemplateAvailability(false)
             } catch {
                 guard current == token else { return }
                 busy = false; self.error = error.localizedDescription

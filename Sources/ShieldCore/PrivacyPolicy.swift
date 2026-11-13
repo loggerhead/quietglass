@@ -55,6 +55,9 @@ public struct SavedWindowArea: Codable, Equatable, Identifiable {
         id = UUID(); self.bundleID = bundleID; self.appName = appName
         titleDigest = Self.digest(windowTitle); self.rectangle = rectangle
     }
+    public init(id: UUID, bundleID: String, appName: String, titleDigest: String, rectangle: CGRect) {
+        self.id = id; self.bundleID = bundleID; self.appName = appName; self.titleDigest = titleDigest; self.rectangle = rectangle
+    }
     public var isValid: Bool {
         !bundleID.isEmpty && titleDigest.count == 64 && rectangle.width > 0 && rectangle.height > 0 &&
         [rectangle.minX, rectangle.minY, rectangle.width, rectangle.height].allSatisfy(\.isFinite) &&

@@ -3,7 +3,7 @@
 import SwiftUI
 
 enum NotchMenuAction: CaseIterable {
-    case snooze, controls, settings, resetPosition, tracking, recenter, preview, clear
+    case snooze, controls, protection, rules, settings, resetPosition, screen, area, window, focus, pause, resume, clear
 }
 
 final class NotchMenuState: ObservableObject {
@@ -17,16 +17,22 @@ struct NotchContextMenuView: View {
 
     var body: some View {
         VStack(spacing: 2) {
+            row(.controls, "Current protection", .controls)
+            row(.protection, "Screen controls", .view)
+            row(.rules, "Auto & shortcuts", .controls)
+            row(.settings, "Settings", .settings)
+            separator
+            row(.screen, "Blur screen now", .viewOff)
+            row(.area, "Select an area", .area)
+            row(.window, "Protect a window", .viewOff)
+            row(.focus, "Focus", .focus)
+            separator
+            row(.pause, "Pause", .pause)
+            row(.resume, "Resume", .play)
+            row(.clear, "Clear all · Escape", .cancel)
+            separator
             row(.snooze, "Hide for 1 hour", .clock)
-            row(.controls, "Control", .controls)
-            row(.settings, "Settings…", .settings)
             row(.resetPosition, "Move Notch Down", .dockBottom)
-            separator
-            row(.tracking, model.enabled ? "Pause tracking" : "Start tracking", model.enabled ? .pause : .play)
-            row(.recenter, "Recenter", .focus, shortcut: model.shortcutLabel, enabled: model.canRecenter)
-            separator
-            row(.preview, model.previewing ? "Clear preview" : "Preview blur", model.previewing ? .cancel : .viewOff)
-            row(.clear, "Clear screen", .view)
         }
         .padding(6)
         .frame(width: 252)

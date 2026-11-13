@@ -7,25 +7,32 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     static let background = CGColor(gray: 0.08, alpha: 1)
     let id: UUID
     private var stream: SCStream!
+    private let configuration: SCStreamConfiguration
+    private var configuredFrameRate: Int32
     private let frameQueue = DispatchQueue(label: "local.clinton.QuietGlass.frames", qos: .userInteractive)
     private let renderQueue = DispatchQueue(label: "local.clinton.QuietGlass.blur", qos: .userInteractive)
     private let renderer = DisplayBlurRenderer()
     private let onFrame: @MainActor (CGImage) -> Void
     private let onFailure: @MainActor (Error) -> Void
     private let onSample: ((CVPixelBuffer) -> Void)?
-    private var radius: Double
+    private var renderPlan: ScreenBlurRenderPlan
+    private let regionalRenderer = DisplayBlurRenderer()
+    private let onRegionFrame: @MainActor (CGImage) -> Void
     private var pendingBuffer: CVPixelBuffer?
     private var lastBuffer: CVPixelBuffer?
     private var rendering = false
     private var stopped = false
     private var renderingEnabled: Bool
 
-    init(id: UUID, filter: SCContentFilter, configuration: SCStreamConfiguration, radius: Double, renderingEnabled: Bool = true,
+    init(id: UUID, filter: SCContentFilter, configuration: SCStreamConfiguration, renderPlan: ScreenBlurRenderPlan, renderingEnabled: Bool = true,
          onFrame: @escaping @MainActor (CGImage) -> Void,
          onFailure: @escaping @MainActor (Error) -> Void,
-         onSample: ((CVPixelBuffer) -> Void)? = nil) {
+         onSample: ((CVPixelBuffer) -> Void)? = nil,
+         onRegionFrame: @escaping @MainActor (CGImage) -> Void) {
         self.id = id
-        self.radius = radius
+        self.configuration = configuration
+        self.configuredFrameRate = configuration.minimumFrameInterval.timescale
+        self.renderPlan = renderPlan; self.onRegionFrame = onRegionFrame
         self.renderingEnabled = renderingEnabled
         self.onFrame = onFrame
         self.onFailure = onFailure
@@ -40,17 +47,33 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stop() {
-        frameQueue.async { [self] in stopped = true; pendingBuffer = nil; lastBuffer = nil }
-        let stream = stream!
-        Task { try? await stream.stopCapture() }
+        Task { await stopAndWait() }
     }
 
-    func setRadius(_ value: Double) {
+    func stopAndWait() async {
+        await withCheckedContinuation { continuation in
+            frameQueue.async { [self] in
+                stopped = true; pendingBuffer = nil; lastBuffer = nil
+                continuation.resume()
+            }
+        }
+        try? await stream.stopCapture()
+    }
+
+    func setRenderPlan(_ value: ScreenBlurRenderPlan) {
         frameQueue.async { [self] in
-            guard !stopped else { return }
-            radius = value
-            pendingBuffer = lastBuffer
-            renderNextFrame()
+            guard !stopped, renderPlan != value else { return }
+            renderPlan = value; pendingBuffer = lastBuffer; renderNextFrame()
+        }
+    }
+
+    @MainActor func setFrameRate(_ value: Int32) {
+        guard value > 0, value != configuredFrameRate else { return }
+        configuredFrameRate = value
+        configuration.minimumFrameInterval = CMTime(value: 1, timescale: value)
+        Task { [stream, configuration, onFailure] in
+            do { try await stream?.updateConfiguration(configuration) }
+            catch { onFailure(error) }
         }
     }
 
@@ -89,15 +112,23 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         guard !stopped, renderingEnabled, !rendering, let buffer = pendingBuffer else { return }
         pendingBuffer = nil
         rendering = true
-        let radius = radius
+        let plan = renderPlan
         renderQueue.async { [self] in
-            let image: CGImage? = autoreleasepool {
-                return renderer.render(CIImage(cvPixelBuffer: buffer), radius: radius)
+            let result: (CGImage?, CGImage?) = autoreleasepool {
+                let input = CIImage(cvPixelBuffer: buffer)
+                let regions = plan.regions.isEmpty ? nil : regionalRenderer.renderRegions(input, regions: plan.regions)
+                // A region-only frame reuses its composite for readiness; it does
+                // not also render an invisible full-screen image.
+                let full = plan.fullScreen ? renderer.render(input, radius: plan.radius) : regions
+                return (full, regions)
             }
             frameQueue.async { [self] in
                 rendering = false
                 guard !stopped else { return }
-                if let image { Task { @MainActor [onFrame] in onFrame(image) } }
+                Task { @MainActor [onFrame, onRegionFrame] in
+                    if let image = result.0 { onFrame(image) }
+                    if let image = result.1 { onRegionFrame(image) }
+                }
                 renderNextFrame()
             }
         }

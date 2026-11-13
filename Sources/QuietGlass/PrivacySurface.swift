@@ -1,6 +1,7 @@
 //  Created by Clinton Imaro on 20/09/2026.
 
 import AppKit
+import ShieldCore
 
 @MainActor
 final class PrivacySurface {
@@ -60,6 +61,10 @@ final class PrivacySurface {
         CATransaction.commit()
         if peeking || (!fullScreen && windows.isEmpty && sensitive.isEmpty) { panel.orderOut(nil) }
         else { panel.orderFrontRegardless() }
+    }
+
+    func update(regions: [ProtectionRegion]) {
+        update(windows: regions.map(\.rectangle), sensitive: [], fullScreen: false)
     }
 
     private func path(for regions: [CGRect]) -> CGPath {

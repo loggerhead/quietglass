@@ -2,9 +2,61 @@
 
 import XCTest
 import AppKit
+import ShieldCore
 @testable import QuietGlass
 
-final class ShieldSurfaceTests: XCTestCase {
+final class ShieldSurfaceTests: OptInDesktopTestCase {
+    @MainActor func testIndependentRegionMasksKeepTheirParametersAndPriorityOverlap() throws {
+        _ = NSApplication.shared
+        let surface = PrivacySurface(screen: try XCTUnwrap(NSScreen.screens.first))
+        defer { surface.panel.close() }
+        surface.resize(to: CGRect(x: 0, y: 0, width: 400, height: 300))
+        surface.update(regions: [
+            ProtectionRegion(rectangle: CGRect(x: 0, y: 0, width: 200, height: 200), blur: BlurParameters(radius: 10), ruleID: UUID()),
+            ProtectionRegion(rectangle: CGRect(x: 100, y: 100, width: 200, height: 200), blur: BlurParameters(radius: 50), ruleID: UUID())])
+        let layers = try XCTUnwrap(surface.panel.contentView?.layer?.sublayers)
+        XCTAssertEqual(layers.count, 1)
+        let masks = layers.compactMap { ($0.mask as? CAShapeLayer)?.path }
+        XCTAssertEqual(masks.filter { $0.contains(CGPoint(x: 150, y: 150)) }.count, 1,
+                       "One rule owns overlap; blur layers must not stack")
+        XCTAssertEqual(masks.filter { $0.contains(CGPoint(x: 250, y: 250)) }.count, 1)
+        XCTAssertEqual(masks.filter { $0.contains(CGPoint(x: 50, y: 50)) }.count, 1)
+        XCTAssertFalse(masks.contains { $0.contains(CGPoint(x: 350, y: 250)) })
+        surface.clear()
+        XCTAssertFalse(surface.panel.isVisible)
+    }
+    @MainActor func testOverlappingFocusAndControlExclusionsFormOneClearUnion() throws {
+        _ = NSApplication.shared
+        let surface = ShieldSurface(screen: try XCTUnwrap(NSScreen.screens.first))
+        defer { surface.panel.close() }
+        surface.resize(to: CGRect(x: 0, y: 0, width: 400, height: 300))
+        surface.update(coverage: 1, direction: .left, excludedRegions: [CGRect(x: 50, y: 50, width: 100, height: 100), CGRect(x: 100, y: 100, width: 100, height: 100)])
+        let mask = try XCTUnwrap(surface.panel.contentView?.layer?.mask as? CAShapeLayer)
+        XCTAssertFalse(mask.path!.contains(CGPoint(x: 120, y: 120), using: .evenOdd), "Overlap must stay clear rather than re-fill by parity")
+        XCTAssertFalse(mask.path!.contains(CGPoint(x: 60, y: 60), using: .evenOdd))
+        XCTAssertTrue(mask.path!.contains(CGPoint(x: 20, y: 20), using: .evenOdd))
+    }
+    @MainActor func testFocusHoleRemainsClearInFullAndDirectionalMasks() throws {
+        _ = NSApplication.shared
+        let surface = ShieldSurface(screen: try XCTUnwrap(NSScreen.screens.first))
+        defer { surface.panel.close() }
+        surface.resize(to: CGRect(x: 100, y: 200, width: 400, height: 300))
+        let hole = CGRect(x: 150, y: 250, width: 100, height: 100)
+        surface.update(coverage: 1, direction: .left, excludedRegions: [hole])
+        let image = try XCTUnwrap(surface.panel.contentView?.layer)
+        let mask = try XCTUnwrap(image.mask as? CAShapeLayer)
+        XCTAssertEqual(mask.fillRule, .evenOdd)
+        let path = try XCTUnwrap(mask.path)
+        XCTAssertFalse(path.contains(CGPoint(x: 60, y: 60), using: .evenOdd))
+        XCTAssertTrue(path.contains(CGPoint(x: 10, y: 10), using: .evenOdd))
+        surface.update(coverage: 0.5, direction: .right, excludedRegions: [hole])
+        let gradient = try XCTUnwrap(image.mask as? CAGradientLayer)
+        let clip = try XCTUnwrap(gradient.mask as? CAShapeLayer)
+        XCTAssertFalse(clip.path!.contains(CGPoint(x: 60, y: 60), using: .evenOdd))
+        surface.update(coverage: 1, direction: .left)
+        XCTAssertNil(image.mask)
+        surface.clear()
+    }
     @MainActor func testFirstFrameRevealKeepsBlurredPixelsOpaqueAndDoesNotRestartForEveryFrame() throws {
         _ = NSApplication.shared
         let surface = ShieldSurface(screen: try XCTUnwrap(NSScreen.screens.first))

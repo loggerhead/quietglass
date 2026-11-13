@@ -39,13 +39,13 @@ struct BlurScreenIntent: AppIntent {
 
 struct PauseQuietGlassIntent: AppIntent {
     static var title: LocalizedStringResource = "Pause QuietGlass"
-    static var description = IntentDescription("Clear all blur, stop nearby-person monitoring, and pause head tracking.")
+    static var description = IntentDescription("Pause all protection rules until you resume.")
     static var openAppWhenRun: Bool = true
 
     @MainActor func perform() async throws -> some IntentResult {
         let model = try QuietGlassIntentBridge.current()
-        model.dismissShield()
-        model.stop()
+        guard let coordinator = model.protectionCoordinator else { throw QuietGlassIntentError.unavailable }
+        coordinator.pause()
         return .result()
     }
 }

@@ -15,6 +15,36 @@ private final class TrackingCamera: NearbyCameraSession {
 
 final class CameraHeadTrackingTests: XCTestCase {
     @MainActor func settle() async { for _ in 0..<20 { await Task.yield() } }
+    @MainActor func testIndependentRuleSensitivityUsesOneCameraAndKeepsCalibrationOnEdits() async throws {
+        var now = 1.0, cameras: [TrackingCamera] = []
+        let tracker = CameraHeadTracking(access: { true }, makeCamera: { let camera = TrackingCamera($0); cameras.append(camera); return camera }, clock: { now }, usesTimer: false)
+        let low = ProtectionRule(name: "Sensitive", trigger: .headTurn(source: .camera), scope: .allDisplays,
+                                 action: .blur(BlurParameters(comfort: 5), peek: nil))
+        var high = ProtectionRule(name: "Relaxed", trigger: .headTurn(source: .camera), scope: .allDisplays,
+                                  action: .blur(BlurParameters(comfort: 25), peek: nil))
+        tracker.configureRules([low, high]); tracker.start(deviceID: ""); await settle()
+        defer { tracker.stop() }
+        func offer(_ yaw: Double, at time: Double) async {
+            now = time
+            cameras[0].completion(.success(NearbyFaceSample(count: 1, capturedAt: time,
+                faces: [CameraFace(bounds: CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.3), yaw: yaw, pitch: 0)])))
+            await settle()
+        }
+        for n in 0...14 { await offer(0, at: 1 + Double(n) * 0.1) }
+        XCTAssertEqual(tracker.calibratedRuleIDs, [low.id, high.id])
+        for n in 0...10 { await offer(0.25, at: 2.5 + Double(n) * 0.1) }
+        XCTAssertGreaterThan(try XCTUnwrap(tracker.rulePolicies[low.id]).coverage, 0)
+        XCTAssertEqual(try XCTUnwrap(tracker.rulePolicies[high.id]).coverage, 0)
+        high.action = .blur(BlurParameters(comfort: 8), peek: nil)
+        tracker.configureRules([low, high])
+        for n in 0...5 { await offer(0.25, at: 3.6 + Double(n) * 0.1) }
+        XCTAssertGreaterThan(try XCTUnwrap(tracker.rulePolicies[high.id]).coverage, 0)
+        XCTAssertEqual(cameras.count, 1)
+        XCTAssertTrue(tracker.rulePolicies[high.id]!.calibrated)
+        tracker.stop(); tracker.start(deviceID: "", keepCovered: true); await settle()
+        XCTAssertEqual(tracker.rulePolicies[high.id]?.coverage, 1)
+        XCTAssertTrue(tracker.calibratedRuleIDs.contains(high.id), "A calibration guard must not uncover a resumed protected session")
+    }
     @MainActor func testCameraDenialDoesNotStartCaptureAndStopCancelsPendingPermission() async {
         var requested = false
         let denied = CameraHeadTracking(access: { false }, makeCamera: { requested = true; return TrackingCamera($0) }, usesTimer: false)

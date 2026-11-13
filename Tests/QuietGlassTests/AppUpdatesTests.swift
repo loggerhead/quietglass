@@ -1,7 +1,24 @@
 import XCTest
+import ShieldCore
 @testable import QuietGlass
 
 final class AppUpdatesTests: XCTestCase {
+    @MainActor func testUpdateMetadataWritesOnlyTheVersionedDocument() async throws {
+        let suite = "QuietGlass.UpdateMigration.\(UUID())"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let oldDate = Date(timeIntervalSince1970: 1)
+        preferences.set(oldDate, forKey: "lastUpdateCheck")
+        preferences.set(false, forKey: "automaticUpdateChecks")
+        let updates = AppUpdates(preferences: preferences, fetch: { _ in (Data(), 404) })
+        await updates.check()
+        XCTAssertEqual(preferences.object(forKey: "lastUpdateCheck") as? Date, oldDate)
+        XCTAssertFalse(preferences.bool(forKey: "automaticUpdateChecks"))
+        let document = try ProtectionStore(storage: preferences).loadOrMigrate()
+        let values = try XCTUnwrap(try PropertyListSerialization.propertyList(from: document.preferences.appearance, format: nil) as? [String: Any])
+        XCTAssertGreaterThan(try XCTUnwrap(values["lastUpdateCheck"] as? Date), oldDate)
+        updates.shutdown()
+    }
     func testVersionsCompareNumericallyAndRejectAmbiguousTags() {
         XCTAssertTrue(ReleaseVersion("0.1.9")! < ReleaseVersion("v0.1.10")!)
         for invalid in ["1", "1.2", "1.2.3-beta", "1.2.3/evil", "1.-2.3", "1.2.", "1.2.3.4"] {

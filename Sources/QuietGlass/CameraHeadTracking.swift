@@ -2,12 +2,6 @@ import Combine
 import Foundation
 import ShieldCore
 
-enum HeadTrackingSource: String, CaseIterable, Identifiable {
-    case airPods, camera
-    var id: String { rawValue }
-    var title: String { self == .airPods ? "AirPods" : "Camera" }
-}
-
 @MainActor
 final class CameraHeadTracking: ObservableObject {
     @Published private(set) var running = false
@@ -17,6 +11,19 @@ final class CameraHeadTracking: ObservableObject {
     var comfort = 15.0
     var transition = 18.0
     var onChange: (() -> Void)?
+    private(set) var rulePolicies: [UUID: CameraHeadPolicy] = [:]
+    private(set) var calibratedRuleIDs = Set<UUID>()
+    private var ruleParameters: [UUID: BlurParameters] = [:]
+    func configureRules(_ rules: [ProtectionRule]) {
+        let values = Dictionary(uniqueKeysWithValues: rules.compactMap { rule -> (UUID, BlurParameters)? in
+            guard rule.isEnabled, case .headTurn(.camera) = rule.trigger, case .blur(let blur, _) = rule.action else { return nil }
+            return (rule.id, blur)
+        })
+        rulePolicies = rulePolicies.filter { values[$0.key] != nil }
+        for id in values.keys where rulePolicies[id] == nil { rulePolicies[id] = policy }
+        calibratedRuleIDs.formIntersection(values.keys)
+        ruleParameters = values
+    }
     private let access: () async -> Bool
     private let makeCamera: (@escaping (Result<NearbyFaceSample, NearbyCameraFailure>) -> Void) -> NearbyCameraSession
     private let clock: () -> TimeInterval
@@ -35,6 +42,7 @@ final class CameraHeadTracking: ObservableObject {
         let protected = keepCovered || policy.calibrated || policy.coverage > 0
         stop()
         policy.beginCalibration(keepCovered: protected)
+        for id in rulePolicies.keys { rulePolicies[id]?.beginCalibration(keepCovered: protected) }
         running = true; failure = nil; message = "Starting camera…"
         generation += 1
         let token = generation
@@ -65,6 +73,7 @@ final class CameraHeadTracking: ObservableObject {
     }
     func recenter() {
         policy.beginCalibration(keepCovered: policy.coverage > 0)
+        for id in rulePolicies.keys { let covered = (rulePolicies[id]?.coverage ?? 0) > 0; rulePolicies[id]?.beginCalibration(keepCovered: covered) }
         message = "Look at the screen and hold still for a moment."
         onChange?()
     }
@@ -74,11 +83,16 @@ final class CameraHeadTracking: ObservableObject {
               acceptedFrame.map({ sample.capturedAt > $0 }) ?? true else { return }
         acceptedFrame = sample.capturedAt; lastFrame = now
         policy.observe(sample.faces ?? [], at: sample.capturedAt, comfort: comfort, transition: transition)
+        for (id, parameters) in ruleParameters {
+            rulePolicies[id]?.observe(sample.faces ?? [], at: sample.capturedAt, comfort: parameters.comfort, transition: parameters.transition)
+            if rulePolicies[id]?.calibrated == true { calibratedRuleIDs.insert(id) }
+        }
         updateMessage(); onChange?()
     }
     func tick() {
         guard running else { return }
         policy.tick(at: clock())
+        for id in rulePolicies.keys { rulePolicies[id]?.tick(at: clock()) }
         if camera != nil, clock() - lastFrame > 4 { fail(.stalled); return }
         updateMessage(); onChange?()
     }
@@ -90,7 +104,7 @@ final class CameraHeadTracking: ObservableObject {
     private func fail(_ error: NearbyCameraFailure) {
         generation += 1; camera?.stop(); camera = nil
         timer?.invalidate(); timer = nil
-        policy.fail(); failure = error
+        policy.fail(); for id in rulePolicies.keys { rulePolicies[id]?.fail() }; failure = error
         message = QG("%@%@", QG(error.title), QG(policy.coverage > 0 ? " · Screen stays protected" : " · Try again"))
         onChange?()
     }
@@ -98,5 +112,6 @@ final class CameraHeadTracking: ObservableObject {
         generation += 1; camera?.stop(); camera = nil
         timer?.invalidate(); timer = nil; running = false; failure = nil
         acceptedFrame = nil; policy = CameraHeadPolicy()
+        for id in rulePolicies.keys { rulePolicies[id] = CameraHeadPolicy() }
     }
 }

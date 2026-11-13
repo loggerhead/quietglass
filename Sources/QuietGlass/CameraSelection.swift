@@ -7,7 +7,6 @@ struct CameraChoice: Identifiable, Equatable {
 }
 
 enum CameraSelection {
-    static let preferenceKey = "nearbyCameraID"
 
     static func devices() -> [AVCaptureDevice] {
         AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera],

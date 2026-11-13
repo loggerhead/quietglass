@@ -11,18 +11,18 @@ struct BlurStrengthControl: View {
     private static let previewVideo = Bundle.main.url(forResource: "BlurPreview", withExtension: "mp4")
 
     var body: some View {
-        HStack(alignment: .top, spacing: 24) {
+        HStack(alignment: .top, spacing: 20) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Blur strength").font(.system(size: 15, weight: .medium))
+                Text("Default blur strength").font(.system(size: 13, weight: .medium))
                 Text("Choose how much detail stays visible.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(width: 148, alignment: .leading)
+            .frame(width: 128, alignment: .leading)
             .padding(.top, 4)
 
-            VStack(spacing: 18) {
+            VStack(spacing: 14) {
                 preview
                 PrivacyLevelSlider(value: $strength, accent: accent,
                                    label: "Privacy blur strength", valueLabel: "\(Int(strength))")
@@ -31,10 +31,10 @@ struct BlurStrengthControl: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: 460)
+            .frame(maxWidth: 390)
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(18)
+        .padding(.vertical, 8)
     }
 
     private var preview: some View {
@@ -78,21 +78,11 @@ struct BlurStrengthControl: View {
         }
     }
 
-    @ViewBuilder private var glassControls: some View {
-        if #available(macOS 26.0, *) {
-            GlassEffectContainer(spacing: 12) {
-                HStack(spacing: 12) {
-                    previewLabel.glassEffect(.regular, in: Capsule())
-                    Spacer(minLength: 8)
-                    strengthLabel.glassEffect(.regular, in: Capsule())
-                }
-            }
-        } else {
-            HStack(spacing: 12) {
-                previewLabel.background(.ultraThinMaterial, in: Capsule())
-                Spacer(minLength: 8)
-                strengthLabel.background(.ultraThinMaterial, in: Capsule())
-            }
+    private var glassControls: some View {
+        HStack(spacing: 12) {
+            previewLabel.background(Color.black.opacity(0.68), in: Capsule())
+            Spacer(minLength: 8)
+            strengthLabel.background(Color.black.opacity(0.68), in: Capsule())
         }
     }
 

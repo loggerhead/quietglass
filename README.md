@@ -10,7 +10,7 @@ QuietGlass is an open-source, native macOS app that helps keep your work private
 
 Privacy also matters while you’re looking at your screen. **Nearby people spots another face in your camera’s view and warns you or blurs the screen, even while you’re still looking.** It works without AirPods. Optional **Recognize me** checks your saved face and a short movement sequence before clearing the camera response.
 
-For everyday control, blur every display instantly, protect a specific window or selected area, blur detected sensitive text, or use **Focus mode** to keep the active window clear while its surroundings fade away. Adjust profiles and app rules from the controls beside the notch. Screen content, camera frames, and motion data are processed on your Mac.
+For everyday control, blur every display instantly, protect a specific window or selected area, blur detected sensitive text, or use **Focus mode** to keep the active window clear while its surroundings fade away. Use Screen controls for current status and manual actions, Auto & shortcuts to configure automatic responses and shortcuts, and Settings for calibration and appearance. Screen content, camera frames, and motion data are processed on your Mac.
 
 <p align="center">
   <img src="media/quietglass-demo.webp" alt="QuietGlass look-away blur, nearby-person alerts, window protection, Focus mode, and notch controls" width="960">
@@ -30,7 +30,7 @@ For everyday control, blur every display instantly, protect a specific window or
 | Nearby people | Tracks additional faces and their estimated head direction; offers Facing screen or Any extra face detection. |
 | Recognize me | Adds optional owner face enrollment and matching to camera-based protection. |
 | Camera coverage check | Choose a camera, preview visible faces, check both sides, and try your response. |
-| Warning actions | Click the notch warning to open Nearby people settings, then blur immediately, pause for five minutes, or resume. |
+| Warning actions | Open the notch rule controls to upgrade a warning, pause, or resume. |
 | Everyday use | Optional launch at login and in-app checks for newer public releases. |
 
 ## Getting started
@@ -52,19 +52,32 @@ Manual screen blur, window protection, area protection, and Focus mode work with
 
 The current download is locally signed and not Apple-notarized. If macOS blocks the first launch, follow the **Open Anyway** instructions included in the download.
 
-Choose **QuietGlass Help** from the menu for an offline setup and troubleshooting guide. Closing Settings keeps QuietGlass running; choose **Quit QuietGlass** to stop it. Enable **Launch at login** in General if desired. Use **Check for Updates…** to check for a newer public release, then download it, quit the app, and replace it in Applications. Automatic checks are optional; installation is manual. Your preferences stay on your Mac.
+Choose **QuietGlass Help** from the menu for an offline setup and troubleshooting guide. Closing Settings keeps QuietGlass running; choose **Quit QuietGlass** to stop it. Enable **Launch at login** in **Settings → General and appearance** if desired. Use **Check for Updates…** to check for a newer public release, then download it, quit the app, and replace it in Applications. Automatic checks are optional; installation is manual. Your preferences stay on your Mac.
 
-### Choose your setup
+### Protect with rules
 
-- **For immediate privacy:** use **Blur screen now**, or press **⌃⌥⌘P**.
-- **For look-away protection:** open **Settings → Head tracking** and choose **Camera** or **AirPods**. Start tracking and calibrate while facing your screen. Camera mode needs a single steady face; it estimates head direction, not eye gaze.
-- **For camera protection:** open **Settings → Protection → Nearby people** and enable detection. **Warn me** gives you 2 minutes to respond before blurring; use **Blur after** to change the delay. **Blur automatically** covers the screen as soon as detection is confirmed.
-- **For background faces:** choose **Facing screen** to consider head direction and how long a face stays visible, or **Any extra face** for the more cautious count-based response. Head direction is an estimate, not proof someone is reading your screen.
-- **To check camera coverage:** choose a camera and click **Run check**. A person must enter the camera’s view to be detected; a wider-view webcam can help cover the sides.
-- **For repeatable app protection:** add an app under App rules and enable **Automatically protect windows**. Use **Remember** on a selected area to restore it for windows with the same app and title. Pause or Escape clears coverage without deleting these saved rules.
-- **For owner recognition:** select **Set up my face**, authenticate with Touch ID or your Mac password, and follow the circular camera guide. Save your face when enrollment is complete.
+The notch automatic-detection switch changes only currently active automatic setups and can restore those same setups; other switches stay as configured.
 
-See the [camera protection guide](CAMERA-PROTECTION.md) for setup details, recognition behavior, and privacy.
+The workspace has three destinations: **Screen controls**, **Auto & shortcuts**, and **Settings**.
+
+For manual and nearby-face rules, **Scope → Select region** opens screenshot-style selection on every display. Set its global shortcut to the right of the button to select while working on another display. A dashed border and caption mark the chosen region while editing. Selection updates the rule draft; **Save rule** commits it. Display regions stay relative to their selected display, while window regions continue to follow their matching windows.
+Closing it keeps protection running.
+
+- **Screen controls** shows active rule names, IDs, reasons, display coverage, and warnings. Use **Blur screen now**, **Select an area**, **Protect a window**, or **Focus** to activate or create manual rules. **Pause**, **Resume**, and **Clear all · Escape** apply globally.
+- **Auto & shortcuts** offers **Someone nearby**, **Look away**, **Sensitive information**, and **Focus** presets. Click a preset to enable and highlight its saved setup. Repeated clicks reuse the same identity and preserve edits. Then use **Edit…** to adjust its trigger, scope, action, and extra requirements. App restrictions, allowed hours, and priority include explanations; access and pause checks are under advanced options. All saved setups share one compact list. Badges show manual actions or the automatic trigger; switches and actions stay on each row.
+- **Settings** contains appearance and profile defaults, shortcuts, permissions and calibration, saved-face setup, and updates. Edit manual shortcuts with their rules; recenter remains a calibration shortcut. The default blur strength retains its live sample preview. Missing Screen Recording or Camera access has a red indicator; enabling a setup that needs it opens the grant flow.
+
+For **Look away**, select Camera or AirPods as the rule's trigger source and calibrate in **Settings → Permissions and calibration**. Camera mode uses a steady single face and estimates head direction. Each rule can have its own start angle, transition angle, blur strength, and display scope.
+
+For **Someone nearby**, choose **Facing screen** or **Any extra face** in the rule editor. **Warn, then blur** uses the configured delay; **Warn only** stays a warning until **Blur now** upgrades it. **Blur** covers the selected scope as soon as detection is confirmed. Multiple detection rules share the camera feed.
+
+For **Sensitive information**, choose supported text types and custom phrases. The scope is detected text. For repeatable app protection, create an **Application event** rule targeting matching windows. For saved areas, enable **Remember matching window titles**; matching uses a local title digest.
+
+**Hold to peek** is a modifier on a continuous manual blur rule. It temporarily removes that rule's coverage while other rules remain effective. **Focus** carves out the active window and pauses head-turn rules while active.
+
+Set up a face in Settings, authenticate with Touch ID or your Mac password, then add **Owner verification** to the nearby rules that require it. A missing or unverified template keeps those rules protected. Deleting a template preserves the rules' verification conditions.
+
+Existing preferences migrate automatically to the versioned `protectionRules.v1` document. Original keys and a backup remain on this Mac. Migration is idempotent; a load failure preserves saved preferences and reports an error for retry. See [architecture](docs/refactor/architecture.md), [migration](docs/refactor/migration.md), and the [capability acceptance matrix](docs/refactor/parity-matrix.md) for implementation status.
 
 ## Permissions
 
@@ -79,12 +92,10 @@ QuietGlass requests permissions for the features you choose to use.
 
 ## Keyboard shortcuts
 
-| Shortcut | Action |
+All configurable shortcuts start empty, including shortcuts saved by previous versions. The first launch of this update clears those bindings once; shortcuts you set afterward remain saved. Set manual and hold-to-peek shortcuts in the setup editor, recenter in Settings, and region selection beside **Select region**. Escape remains the fixed clear command.
+
+| Key | Action |
 | --- | --- |
-| ⌃⌥⌘P | Toggle full-screen blur |
-| ⌃⌥⌘A | Select an area to protect |
-| ⌃⌥⌘C | Recenter or start head tracking |
-| ⌃⌥⌘Space | Hold to peek through manual screen blur |
 | Escape | Clear protection and stop camera monitoring |
 | ⌘S | Toggle the settings sidebar |
 
@@ -95,7 +106,7 @@ QuietGlass processes screen content, recognized text, camera frames, and motion 
 - Screen images, camera frames, recognized text, and motion history are processed without being saved or uploaded by QuietGlass.
 - Preferences, app rules, saved area coordinates, and custom phrases are stored locally. Saved areas match a one-way digest of the window title; the title itself is not stored.
 - Optional owner enrollment stores a face template in the encrypted macOS Keychain. Saved face data can be deleted in Settings.
-- Camera access is limited to enabled camera head tracking, enrollment, Nearby people monitoring, and an explicitly started coverage check. Your Nearby people setting is remembered across app launches. Monitoring pauses while your Mac is inactive and resumes when you return. Turning detection off or pressing Escape keeps it off until you enable it again. Head tracking starts when you choose **Start tracking**; its Camera/AirPods source choice is remembered.
+- Camera access is limited to enabled camera head tracking, enrollment, Nearby people monitoring, and an explicitly started coverage check. Your Nearby people setting is remembered across app launches. Monitoring pauses while your Mac is inactive and resumes when you return. Turning detection off or pressing Escape keeps it off until you enable it again. Enabled head-turn rules start their configured sources after the required permissions and calibration.
 - Update checks contact GitHub for public release metadata. They do not include screen content, camera data, face templates, or custom phrases, and automatic checks are off by default.
 - QuietGlass does not record microphone audio.
 - Core protection features do not require a hosted backend or cloud inference.
@@ -117,7 +128,7 @@ QuietGlass uses Swift Package Manager and native Apple frameworks.
 git clone https://github.com/clintonimaroo/quietglass.git
 cd quietglass
 
-swift test
+swift test --build-system native
 bash build.sh
 
 open ../Build.noindex/QuietGlass.app
@@ -167,10 +178,18 @@ The application layer manages windows, controls, permissions, and system integra
 ### Testing
 
 ```sh
-swift test
+scripts/test.sh
 ```
 
 Automated tests cover protection policies, calibration, screen geometry, text matching, camera state handling, owner enrollment, and template storage.
+
+The default suite does not activate windows or execute desktop interaction tests.
+Compile native UI automation with `scripts/test-desktop.sh --prepare-ui`.
+Run it explicitly on this Mac with `scripts/test-desktop.sh --ui --interactive`;
+that command uses the desktop and can change keyboard focus. Panel, hotkey, and
+system integration checks use `--integration --interactive`. See
+[testing without desktop interruptions](docs/testing.md) for the test groups,
+rendering artifacts, execution guards, and result locations.
 
 Hardware and interaction checks are recorded in the [validation notes](VALIDATION.md).
 

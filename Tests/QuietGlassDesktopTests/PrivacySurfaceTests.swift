@@ -2,9 +2,10 @@
 
 import XCTest
 import AppKit
+import ShieldCore
 @testable import QuietGlass
 
-final class PrivacySurfaceTests: XCTestCase {
+final class PrivacySurfaceTests: OptInDesktopTestCase {
     @MainActor func testNewSurfaceLaysOutImageAndMaskWithoutAResize() throws {
         _ = NSApplication.shared
         let screen = try XCTUnwrap(NSScreen.screens.first)
@@ -64,10 +65,11 @@ final class PrivacySurfaceTests: XCTestCase {
 
     @MainActor func testScreenParameterChangesPreserveExistingBlurPixels() throws {
         _ = NSApplication.shared
-        let controller = PrivacyController()
+        let controller = ScreenBlurExecutor()
+        var engine = try ProtectionEngine()
         defer { controller.shutdown() }
-        controller.screenParametersChanged()
-        let surface = try XCTUnwrap(controller.surfaces.values.first)
+        controller.apply(engine.send(.tick, at: 0))
+        let surface = try XCTUnwrap(controller.regionSurfaces.values.first)
         let panel = surface.panel
         let context = try XCTUnwrap(CGContext(data: nil, width: 4, height: 4, bitsPerComponent: 8,
                                              bytesPerRow: 16, space: CGColorSpaceCreateDeviceRGB(),
@@ -75,9 +77,9 @@ final class PrivacySurfaceTests: XCTestCase {
         context.setFillColor(NSColor.blue.cgColor)
         context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
         surface.setImage(try XCTUnwrap(context.makeImage()))
-        controller.screenParametersChanged()
-        controller.screenParametersChanged()
-        XCTAssertTrue(controller.surfaces.values.contains { $0.panel === panel })
+        controller.apply(engine.send(.tick, at: 0))
+        controller.apply(engine.send(.tick, at: 0))
+        XCTAssertTrue(controller.regionSurfaces.values.contains { $0.panel === panel })
         XCTAssertTrue(surface.hasImage, "Work-area changes must not clear a captured blur frame")
     }
 }
