@@ -11,12 +11,13 @@ final class ProtectionRuleTests: XCTestCase {
             .windowTitle(bundleID: ref.bundleID, titleDigest: ref.titleDigest!)]
         let scopes: [ProtectionScope] = [.allDisplays, .display(ids: [1]), .window(ref),
             .region(ref, normalizedRect: CGRect(x: 0.1, y: 0.2, width: 0.3, height: 0.4), persistence: .rememberWindowTitle),
-            .detectedText, .allDisplaysExceptActiveWindow, .displayRegion(id: 2, normalizedRect: CGRect(x: 0.1, y: 0.2, width: 0.3, height: 0.4))]
+            .detectedText, .allDisplaysExceptActiveWindow, .displayRegion(id: 2, normalizedRect: CGRect(x: 0.1, y: 0.2, width: 0.3, height: 0.4)),
+            .desktopRegion(id: 2, normalizedRect: CGRect(x: 0.1, y: 0.2, width: 0.3, height: 0.4), desktop: DesktopSpace(id: 3, number: 1))]
         let actions: [ProtectionAction] = [.blur(BlurParameters(), peek: nil), .warnThenBlur(delay: 120, sound: true),
-                                          .warnOnly(delay: 120, sound: false), .pauseOtherProtection(duration: nil)]
+                                          .warnOnly(delay: 120, sound: false), .pauseOtherProtection(duration: nil), .lockScreen]
         // Specification plus the requested screenshot-style region scope for manual/nearby rules.
-        let legalScopes: [Set<Int>] = [[0, 1, 2, 3, 5, 6], [0, 1], [0, 2, 6], [4], [2, 5], [3]]
-        let legalActions: [Set<Int>] = [[0], [0], [0, 1, 2], [0], [0, 3], [0]]
+        let legalScopes: [Set<Int>] = [[0, 1, 2, 3, 5, 6, 7], [0, 1], [0, 1, 2, 6, 7], [4], [2, 5], [3]]
+        let legalActions: [Set<Int>] = [[0, 4], [0, 4], [0, 1, 2, 4], [0, 4], [0, 3, 4], [0, 4]]
         var checked = 0
         for (t, trigger) in triggers.enumerated() {
             for (s, scope) in scopes.enumerated() {
@@ -27,7 +28,7 @@ final class ProtectionRuleTests: XCTestCase {
                 }
             }
         }
-        XCTAssertEqual(checked, 168)
+        XCTAssertEqual(checked, 240)
     }
 
     func testPeekIsAllowedOnlyOnSustainedManualBlur() {
@@ -62,7 +63,9 @@ final class ProtectionRuleTests: XCTestCase {
         XCTAssertTrue(ProtectionRuleValidator.validate(rule).contains(.invalidScope))
         for scope in [ProtectionScope.displayRegion(id: 0, normalizedRect: CGRect(x: 0, y: 0, width: 1, height: 1)),
                       .displayRegion(id: 1, normalizedRect: CGRect(x: -0.1, y: 0, width: 0.3, height: 0.3)),
-                      .displayRegion(id: 1, normalizedRect: .zero)] {
+                      .displayRegion(id: 1, normalizedRect: .zero),
+                      .desktopRegion(id: 1, normalizedRect: CGRect(x: 0, y: 0, width: 1, height: 1), desktop: DesktopSpace(id: 0, number: 1)),
+                      .desktopRegion(id: 1, normalizedRect: CGRect(x: 0, y: 0, width: 1, height: 1), desktop: DesktopSpace(id: 3, number: 0))] {
             let invalid = ProtectionRule(name: "Display region", trigger: .manual(shortcut: nil), scope: scope)
             XCTAssertTrue(ProtectionRuleValidator.validate(invalid).contains(.invalidScope))
         }
@@ -87,6 +90,13 @@ final class ProtectionRuleTests: XCTestCase {
         let rule = ProtectionRule(name: "Remembered", trigger: .windowTitle(bundleID: ref.bundleID, titleDigest: ref.titleDigest!),
                                   scope: .region(ref, normalizedRect: CGRect(x: 0, y: 0, width: 1, height: 1), persistence: .rememberWindowTitle))
         XCTAssertEqual(try JSONDecoder().decode(ProtectionRule.self, from: JSONEncoder().encode(rule)), rule)
+        let desktop = ProtectionRule(name: "Desktop area", trigger: .extraFace(detection: .anyFace),
+                                     scope: .desktopRegion(id: 1, normalizedRect: CGRect(x: 0.1, y: 0.2, width: 0.3, height: 0.4),
+                                                           desktop: DesktopSpace(id: 3, number: 1)))
+        XCTAssertEqual(try JSONDecoder().decode(ProtectionRule.self, from: JSONEncoder().encode(desktop)), desktop)
+        let lock = ProtectionRule(name: "Lock", trigger: .extraFace(detection: .anyFace), scope: .allDisplays, action: .lockScreen)
+        XCTAssertTrue(ProtectionRuleValidator.validate(lock).isEmpty)
+        XCTAssertEqual(try JSONDecoder().decode(ProtectionRule.self, from: JSONEncoder().encode(lock)), lock)
     }
 
     func testDuplicateIdentityAndInvalidRulesCannotEnterEngine() throws {

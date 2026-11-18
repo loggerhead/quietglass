@@ -4,10 +4,11 @@ import ShieldCore
 
 final class RuleEditingTests: XCTestCase {
     func testEditorOffersOnlyTheSpecifiedScopeAndActionCombinations() {
-        let scopes: [RuleTriggerKind: Set<RuleScopeKind>] = [.manual: [.allDisplays, .displays, .selectedRegion, .window, .region, .focus], .headTurn: [.allDisplays, .displays],
-            .extraFace: [.allDisplays, .window, .selectedRegion], .sensitiveText: [.detectedText], .appEvent: [.window, .focus], .windowTitle: [.region]]
-        let actions: [RuleTriggerKind: Set<RuleActionKind>] = [.manual: [.blur], .headTurn: [.blur], .extraFace: [.blur, .warnThenBlur, .warnOnly],
-            .sensitiveText: [.blur], .appEvent: [.blur, .pause], .windowTitle: [.blur]]
+        let scopes: [RuleTriggerKind: Set<RuleScopeKind>] = [.manual: [.displays, .selectedRegion, .window, .region, .focus], .headTurn: [.displays],
+            .extraFace: [.displays, .window, .selectedRegion], .sensitiveText: [.detectedText], .appEvent: [.window, .focus], .windowTitle: [.region]]
+        let actions: [RuleTriggerKind: Set<RuleActionKind>] = [.manual: [.blur, .lockScreen], .headTurn: [.blur, .lockScreen],
+            .extraFace: [.blur, .warnThenBlur, .warnOnly, .lockScreen], .sensitiveText: [.blur, .lockScreen],
+            .appEvent: [.blur, .pause, .lockScreen], .windowTitle: [.blur, .lockScreen]]
         for trigger in RuleTriggerKind.allCases {
             var draft = RuleDraft(); draft.selectTrigger(trigger)
             XCTAssertEqual(Set(draft.allowedScopes), scopes[trigger])
@@ -33,6 +34,26 @@ final class RuleEditingTests: XCTestCase {
             scope: .region(ref, normalizedRect: CGRect(x: 0.1, y: 0.2, width: 0.4, height: 0.5), persistence: .rememberWindowTitle),
             action: .blur(BlurParameters(radius: 44), peek: nil), guards: [.notPaused, .permission(.screen), .timeWindow(start: DateComponents(hour: 22, minute: 30), end: DateComponents(hour: 6, minute: 15))])
         let draft = RuleDraft(rule: rule)
+        XCTAssertEqual(draft.rule, rule)
+        XCTAssertTrue(draft.canSave)
+    }
+    func testNewRulesChooseSpecificDisplaysWhileExistingAllDisplaysRulesKeepTheirScope() {
+        let draft = RuleDraft()
+        XCTAssertEqual(draft.scopeKind, .displays)
+        XCTAssertFalse(draft.allowedScopes.contains(.allDisplays))
+        let legacy = ProtectionRule(name: "Legacy", trigger: .manual(shortcut: nil), scope: .allDisplays)
+        let legacyDraft = RuleDraft(rule: legacy)
+        XCTAssertTrue(legacyDraft.allowedScopes.contains(.allDisplays))
+        XCTAssertEqual(legacyDraft.rule, legacy)
+    }
+    func testDesktopRegionRoundTripsThroughTheDraft() {
+        let desktop = DesktopSpace(id: 42, number: 2)
+        let rule = ProtectionRule(name: "Desktop area", trigger: .extraFace(detection: .anyFace),
+            scope: .desktopRegion(id: 7, normalizedRect: CGRect(x: 0.1, y: 0.2, width: 0.3, height: 0.4), desktop: desktop),
+            action: .warnOnly(delay: 10, sound: false))
+        let draft = RuleDraft(rule: rule)
+        XCTAssertEqual(draft.scopeKind, .selectedRegion)
+        XCTAssertEqual(draft.desktopSpace, desktop)
         XCTAssertEqual(draft.rule, rule)
         XCTAssertTrue(draft.canSave)
     }

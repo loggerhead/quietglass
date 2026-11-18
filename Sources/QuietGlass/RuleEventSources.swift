@@ -36,7 +36,7 @@ final class RuleEventSources {
             if case .manual = rule.trigger, !coordinator.isManuallyActivated(rule.id) {
                 if case .region(_, _, .rememberWindowTitle) = rule.scope {} else { return false }
             }
-            switch rule.scope { case .window, .region, .displayRegion, .detectedText, .allDisplaysExceptActiveWindow: return true; default: return false }
+            switch rule.scope { case .window, .region, .displayRegion, .desktopRegion, .detectedText, .allDisplaysExceptActiveWindow: return true; default: return false }
         }
     }
     func refresh() {
@@ -72,9 +72,10 @@ final class RuleEventSources {
             .flatMap { $0[kCGWindowBounds as String] as? NSDictionary }.flatMap { CGRect(dictionaryRepresentation: $0) }
             .map { CGRect(x: $0.minX, y: top - $0.maxY, width: $0.width, height: $0.height) }
         let controls = PrivacyController.visibleControlRegions(in: items, appPID: own, desktopTop: top)
+        let desktops = DesktopSpaces.current()
         let displays = NSScreen.screens.compactMap { screen -> ProtectionDisplay? in
             guard let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value else { return nil }
-            return ProtectionDisplay(id: id, frame: screen.frame)
+            return ProtectionDisplay(id: id, frame: screen.frame, spaceID: desktops[id]?.id, desktopNumber: desktops[id]?.number)
         }
         return [.displays(displays), .windows(windows, activeWindow: active, activeBundleID: frontBundleID, controlRegions: controls)]
     }

@@ -20,7 +20,7 @@ final class NotchState: ObservableObject {
     @Published var edge: NotchEdge = .bottom
 }
 
-enum NotchAction: CaseIterable { case automaticDetection, settings, area }
+enum NotchAction: CaseIterable { case automaticDetection, settings, area, quit }
 
 @MainActor
 final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
@@ -237,10 +237,10 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
     private func layoutPanel(animated: Bool = false) {
         let frame: NSRect
         if orientationTransition {
-            frame = NotchDocking.frame(anchor: anchor, vertical: false, expanded: true, controlCount: 3)
-                .union(NotchDocking.frame(anchor: anchor, vertical: true, expanded: true, controlCount: 3))
+            frame = NotchDocking.frame(anchor: anchor, vertical: false, expanded: true, controlCount: 4)
+                .union(NotchDocking.frame(anchor: anchor, vertical: true, expanded: true, controlCount: 4))
         } else {
-            frame = NotchDocking.frame(anchor: anchor, vertical: state.edge.isVertical, expanded: usesExpandedBounds, controlCount: 3)
+            frame = NotchDocking.frame(anchor: anchor, vertical: state.edge.isVertical, expanded: usesExpandedBounds, controlCount: 4)
         }
         if animated, panel.isVisible, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             NSAnimationContext.runAnimationGroup { context in
@@ -296,6 +296,9 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
             return
         case .area:
             showControls(areaOptions: true)
+            return
+        case .quit:
+            NSApplication.shared.terminate(nil)
             return
         }
         showHint(action)
@@ -392,7 +395,7 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
             model: model, areaOptions: areaOptions, close: { [weak self] in self?.closeControls() }))
         popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let edge: NSRectEdge = state.edge == .left ? .maxX : state.edge == .right ? .minX : .maxY
-        let controls = NotchDocking.frame(anchor: anchor, vertical: state.edge.isVertical, expanded: true, controlCount: 3)
+        let controls = NotchDocking.frame(anchor: anchor, vertical: state.edge.isVertical, expanded: true, controlCount: 4)
         let attachment: NSPoint
         switch state.edge {
         case .left: attachment = NSPoint(x: controls.maxX, y: controls.midY)
@@ -409,7 +412,7 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
 
     private func positionControls() {
         guard popover.isShown, let window = popover.contentViewController?.view.window else { return }
-        let controls = NotchDocking.frame(anchor: anchor, vertical: state.edge.isVertical, expanded: true, controlCount: 3)
+        let controls = NotchDocking.frame(anchor: anchor, vertical: state.edge.isVertical, expanded: true, controlCount: 4)
         let visible = popupBounds()
         var origin = window.frame.origin
         switch state.edge {
@@ -536,6 +539,7 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
         case .pause: model.protectionCoordinator?.pause()
         case .resume: model.protectionCoordinator?.resume()
         case .clear: model.dismissShield()
+        case .quit: NSApplication.shared.terminate(nil)
         }
 
     }
@@ -627,6 +631,12 @@ struct NotchBarView: View {
                 .position(controlCenter(43, resting: 10))
                 .allowsHitTesting(state.expanded)
                 .accessibilityHidden(!state.expanded)
+            control(.quit, icon: .power)
+                .scaleEffect(state.expanded ? 1 : 0.45)
+                .opacity(state.expanded ? 1 : 0)
+                .position(controlCenter(111, resting: 10))
+                .allowsHitTesting(state.expanded)
+                .accessibilityHidden(!state.expanded)
             control(.automaticDetection, icon: .view)
                 .position(x: 24, y: 24)
         }
@@ -679,9 +689,10 @@ struct NotchBarView: View {
 
     private func label(_ item: NotchAction) -> String {
         switch item {
-        case .automaticDetection: return "Automatic detection"
+        case .automaticDetection: return "Automatic protection"
         case .settings: return "Settings"
         case .area: return "Choose content…"
+        case .quit: return "Quit QuietGlass"
         }
     }
 }
@@ -707,9 +718,10 @@ private struct NotchHintView: View {
 
     private var label: String {
         switch action {
-        case .automaticDetection: return "Automatic detection"
+        case .automaticDetection: return "Automatic protection"
         case .settings: return "Settings"
         case .area: return "Choose content…"
+        case .quit: return "Quit QuietGlass"
         }
     }
 }
@@ -745,8 +757,8 @@ struct NotchControlsView: View {
                 Spacer()
                 Button(QG("Close"), action: close).buttonStyle(RuleButtonStyle(tone: .quiet))
             }
-            RuleSettingRow(title: "Automatic detection", detail: "Changes only the currently active automatic setups.") {
-                Toggle(QG("Automatic detection"), isOn: Binding(get: { model.automaticDetectionEnabled }, set: model.setAutomaticDetection))
+            RuleSettingRow(title: "Automatic protection", detail: "Changes only the currently active automatic setups.") {
+                Toggle(QG("Automatic protection"), isOn: Binding(get: { model.automaticDetectionEnabled }, set: model.setAutomaticDetection))
                     .labelsHidden().toggleStyle(RuleToggleStyle(showsLabel: false))
             }
             Text(QG(model.status)).font(.system(size: 12)).foregroundStyle(RulePalette.secondary).lineLimit(3)

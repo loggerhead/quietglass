@@ -24,7 +24,12 @@ struct RuleEditorView: View {
             value.delay = coordinator.document.preferences.defaultWarningDelay
             value.sound = coordinator.document.preferences.defaultWarningSound
         }
-        if rule == nil { value.name = QG(value.name) }
+        if rule == nil {
+            value.name = QG(value.name)
+            // "Specific displays" replaces the old All displays default: start
+            // with every connected display checked, then let the user narrow it.
+            value.displayIDs = Set(model.connectedDisplays.map(\.id))
+        }
         _draft = State(initialValue: value)
     }
     var body: some View {
@@ -160,6 +165,7 @@ struct RuleEditorView: View {
             switch draft.scopeKind {
             case .allDisplays: Text(QG("This rule applies to every connected display.")).font(.system(size: 12)).foregroundStyle(RulePalette.secondary)
             case .displays:
+                Text(QG("Choose the displays this rule affects.")).font(.system(size: 12)).foregroundStyle(RulePalette.secondary)
                 ForEach(model.connectedDisplays, id: \.id) { display in
                     Toggle(display.name, isOn: Binding(get: { draft.displayIDs.contains(display.id) }, set: { if $0 { draft.displayIDs.insert(display.id) } else { draft.displayIDs.remove(display.id) } }))
                 }
@@ -169,11 +175,37 @@ struct RuleEditorView: View {
                     Text(QG("Drag to select a region on any display. Escape cancels selection.")).font(.system(size: 12)).foregroundStyle(RulePalette.secondary)
                 } else {
                     let name = model.connectedDisplays.first { $0.id == draft.regionDisplayID }?.name ?? QG("Display %ld", Int(draft.regionDisplayID))
-                    Label(QG("Selected region on %@", name), systemImage: "checkmark.circle").foregroundStyle(RulePalette.accent)
+                    if let desktop = draft.desktopSpace {
+                        Label(QG("Selected region on %@ · Desktop %ld", name, desktop.number), systemImage: "checkmark.circle")
+                            .foregroundStyle(RulePalette.accent)
+                        Text(QG("This area is protected only on Desktop %ld.", desktop.number))
+                            .font(.system(size: 11)).foregroundStyle(RulePalette.secondary)
+                    } else {
+                        Label(QG("Selected region on %@", name), systemImage: "checkmark.circle").foregroundStyle(RulePalette.accent)
+                        Text(QG("This area is not bound to a Desktop."))
+                            .font(.system(size: 11)).foregroundStyle(RulePalette.secondary)
+                    }
                     Text(QG("%ld%% × %ld%% of the display", Int(draft.rectangle.width * 100), Int(draft.rectangle.height * 100)))
                         .font(.system(size: 11)).foregroundStyle(RulePalette.secondary)
                 }
-            case .window, .region:
+            case .window:
+                Divider()
+                if draft.triggerKind == .manual { Toggle(QG("Choose a window when activated"), isOn: $draft.chooseOnActivation) }
+                if draft.chooseOnActivation {
+                    Text(QG("Choose the window each time you use this rule.")).font(.system(size: 12)).foregroundStyle(RulePalette.secondary)
+                } else {
+                    Text(applicationName(draft.targetBundle)).font(.system(size: 12)).foregroundStyle(RulePalette.secondary)
+                    HStack { Button(QG("Choose app…")) { chooseApp(trigger: false) } }
+                    DisclosureGroup(QG("Advanced matching")) {
+                        TextField(QG("Target application bundle ID"), text: $draft.targetBundle).textFieldStyle(.roundedBorder).padding(.top, 8)
+                    }.font(.system(size: 12))
+                    Text(QG("All windows of this app are protected.")).font(.system(size: 11)).foregroundStyle(RulePalette.secondary)
+                    if draft.windowID != nil {
+                        Text(QG("This rule currently matches one window.")).font(.system(size: 11)).foregroundStyle(.orange)
+                        Button(QG("Protect all windows")) { draft.windowID = nil; draft.ownerPID = nil; draft.titleDigest = "" }
+                    }
+                }
+            case .region:
                 Divider()
                 if draft.triggerKind == .manual { Toggle(QG("Choose a window when activated"), isOn: $draft.chooseOnActivation) }
                 if draft.chooseOnActivation {
@@ -188,17 +220,15 @@ struct RuleEditorView: View {
                         Toggle(QG("Match this window only"), isOn: Binding(get: { draft.windowID != nil }, set: { if !$0 { draft.windowID = nil; draft.ownerPID = nil } }))
                         Text(QG("This selection lasts until the window closes.")).font(.system(size: 11)).foregroundStyle(RulePalette.secondary)
                     }
-                    if draft.scopeKind == .region {
-                        DisclosureGroup(QG("Adjust the area")) {
-                            VStack(spacing: 10) {
-                                HStack { coordinate("X", \CGRect.origin.x); coordinate("Y", \CGRect.origin.y) }
-                                HStack { coordinate("Width", \CGRect.size.width); coordinate("Height", \CGRect.size.height) }
-                                Text(QG("Region coordinates range from 0 to 1 within the window.")).font(.system(size: 11)).foregroundStyle(RulePalette.secondary)
-                            }.padding(.top, 10)
-                        }
-                        Toggle(QG("Remember matching window titles"), isOn: $draft.rememberRegion)
-                        if draft.rememberRegion { Text(QG("Use active window to remember its title.")).font(.system(size: 11)).foregroundStyle(RulePalette.secondary) }
+                    DisclosureGroup(QG("Adjust the area")) {
+                        VStack(spacing: 10) {
+                            HStack { coordinate("X", \CGRect.origin.x); coordinate("Y", \CGRect.origin.y) }
+                            HStack { coordinate("Width", \CGRect.size.width); coordinate("Height", \CGRect.size.height) }
+                            Text(QG("Region coordinates range from 0 to 1 within the window.")).font(.system(size: 11)).foregroundStyle(RulePalette.secondary)
+                        }.padding(.top, 10)
                     }
+                    Toggle(QG("Remember matching window titles"), isOn: $draft.rememberRegion)
+                    if draft.rememberRegion { Text(QG("Use active window to remember its title.")).font(.system(size: 11)).foregroundStyle(RulePalette.secondary) }
                 }
             case .detectedText: Text(QG("Only the matching text is blurred. The rest stays clear.")).font(.system(size: 12)).foregroundStyle(RulePalette.secondary)
             case .focus: Text(QG("Your current window stays clear. Head-turn protection pauses while Focus is active.")).font(.system(size: 12)).foregroundStyle(RulePalette.secondary)
@@ -222,7 +252,7 @@ struct RuleEditorView: View {
     }
     private func updateRegionMarker() {
         model.showRuleRegionMarker(draft.scopeKind == .selectedRegion && draft.regionDisplayID != 0
-            ? SelectedDisplayRegion(displayID: draft.regionDisplayID, normalizedRect: draft.rectangle) : nil)
+            ? SelectedDisplayRegion(displayID: draft.regionDisplayID, normalizedRect: draft.rectangle, desktop: draft.desktopSpace) : nil)
     }
     private func selectRegion() {
         guard draft.allowedScopes.contains(.selectedRegion) else { return }
@@ -230,7 +260,8 @@ struct RuleEditorView: View {
     }
     private var actionFields: some View {
         RuleCard(title: "How to protect", icon: "lock.shield") {
-            RuleChoiceField(title: "Respond with", selection: $draft.actionKind, options: draft.allowedActions.map { ($0, $0.title) })
+            RuleChoiceField(title: "Respond with", selection: Binding(get: { draft.actionKind }, set: { draft.setAction($0) }),
+                            options: draft.allowedActions.map { ($0, $0.title) })
             Divider()
             switch draft.actionKind {
             case .blur:
@@ -257,6 +288,9 @@ struct RuleEditorView: View {
                 Toggle(QG("Pause until the condition ends"), isOn: $draft.indefinitePause)
                 if !draft.indefinitePause { TextField(QG("Pause duration in seconds"), value: $draft.pauseDuration, format: .number).textFieldStyle(.roundedBorder) }
                 Toggle(QG("Pause head-turn rules only"), isOn: $draft.pauseHeadsOnly)
+            case .lockScreen:
+                Text(QG("Locks this Mac once when this setup activates. Unlocking requires your password; it will not lock again until the condition clears."))
+                    .font(.system(size: 11)).foregroundStyle(RulePalette.secondary)
             }
         }
     }

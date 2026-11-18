@@ -31,9 +31,9 @@ enum RuleScopeKind: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .allDisplays: return "All displays"
-        case .displays: return "Selected displays"
-        case .selectedRegion: return "Select region"
-        case .window: return "An app’s windows"
+        case .displays: return "Specific displays"
+        case .selectedRegion: return "Specific region"
+        case .window: return "Specific app"
         case .region: return "Part of a window"
         case .detectedText: return "Matching text"
         case .focus: return "Everything except my current window"
@@ -41,7 +41,7 @@ enum RuleScopeKind: String, CaseIterable, Identifiable {
     }
 }
 enum RuleActionKind: String, CaseIterable, Identifiable {
-    case blur, warnThenBlur, warnOnly, pause
+    case blur, warnThenBlur, warnOnly, pause, lockScreen
     var id: Self { self }
     var title: String {
         switch self {
@@ -49,6 +49,7 @@ enum RuleActionKind: String, CaseIterable, Identifiable {
         case .warnThenBlur: return "Warn, then blur"
         case .warnOnly: return "Warn only"
         case .pause: return "Pause other protection"
+        case .lockScreen: return "Lock screen"
         }
     }
 }
@@ -61,7 +62,7 @@ struct RuleDraft {
     var enabled: Bool
     var priority: Int
     var triggerKind: RuleTriggerKind
-    var scopeKind: RuleScopeKind = .allDisplays
+    var scopeKind: RuleScopeKind = .displays
     var actionKind: RuleActionKind = .blur
     var source: HeadTrackingSource = .airPods
     var detection: NearbyDetection = .facingScreen
@@ -75,6 +76,7 @@ struct RuleDraft {
     var ownerPID: Int32?
     var displayIDs: Set<UInt32> = []
     var regionDisplayID: UInt32 = 0
+    var desktopSpace: DesktopSpace?
     var rectangle = CGRect(x: 0.1, y: 0.1, width: 0.3, height: 0.3)
     var rememberRegion = false
     var blur = BlurParameters()
@@ -98,6 +100,8 @@ struct RuleDraft {
     var timeEnabled = false
     var startHour = 9, startMinute = 0, endHour = 17, endMinute = 0
     private var guardOrder: [ProtectionGuard] = []
+    private var keepsAllDisplays = false
+    private var screenPermissionBeforeLock: Bool?
 
     init(rule: ProtectionRule) {
         guardOrder = rule.guards
@@ -112,9 +116,11 @@ struct RuleDraft {
         case .windowTitle(let bundle, let digest): triggerBundle = bundle; titleDigest = digest
         }
         switch rule.scope {
-        case .allDisplays: scopeKind = .allDisplays
+        case .allDisplays: scopeKind = .allDisplays; keepsAllDisplays = true
         case .display(let ids): scopeKind = .displays; displayIDs = Set(ids)
         case .displayRegion(let id, let rect): scopeKind = .selectedRegion; regionDisplayID = id; rectangle = rect
+        case .desktopRegion(let id, let rect, let desktop):
+            scopeKind = .selectedRegion; regionDisplayID = id; rectangle = rect; desktopSpace = desktop
         case .window(let ref): scopeKind = .window; setWindow(ref)
         case .region(let ref, let rect, let persistence):
             scopeKind = .region; setWindow(ref); rectangle = rect; rememberRegion = persistence == .rememberWindowTitle
@@ -129,6 +135,8 @@ struct RuleDraft {
         case .warnOnly(let delay, let sound): actionKind = .warnOnly; self.delay = delay; self.sound = sound
         case .pauseOtherProtection(let duration, let target):
             actionKind = .pause; indefinitePause = duration == nil; pauseDuration = duration ?? 300; pauseHeadsOnly = target == .headTurn
+        case .lockScreen:
+            actionKind = .lockScreen; peekEnabled = false
         }
         screenPermission = false
         for condition in rule.guards {
@@ -148,7 +156,7 @@ struct RuleDraft {
         notPaused = rule.guards.contains(.notPaused)
     }
     init(parameters: BlurParameters = BlurParameters()) {
-        self.init(rule: ProtectionRule(name: "New rule", trigger: .manual(shortcut: nil), scope: .allDisplays,
+        self.init(rule: ProtectionRule(name: "New rule", trigger: .manual(shortcut: nil), scope: .display(ids: []),
                                       action: .blur(parameters, peek: nil), guards: [.permission(.screen), .notPaused]))
     }
     mutating func setWindow(_ ref: ProtectedWindowRef) {
@@ -158,6 +166,7 @@ struct RuleDraft {
     }
     mutating func setDisplayRegion(_ selection: SelectedDisplayRegion) {
         scopeKind = .selectedRegion; regionDisplayID = selection.displayID; rectangle = selection.normalizedRect
+        desktopSpace = selection.desktop
         targetBundle = ""; windowID = nil; ownerPID = nil; titleDigest = ""; rememberRegion = false
     }
     mutating func selectTrigger(_ kind: RuleTriggerKind) {
@@ -170,6 +179,19 @@ struct RuleDraft {
         if !allowedScopes.contains(scopeKind) { scopeKind = allowedScopes.first ?? .allDisplays }
         if kind == .windowTitle { rememberRegion = true }
     }
+    mutating func setAction(_ kind: RuleActionKind) {
+        // Locking does not use Screen Recording, so drop that requirement while
+        // it is selected and restore the previous choice when switching back.
+        if kind == .lockScreen, actionKind != .lockScreen {
+            screenPermissionBeforeLock = screenPermission
+            screenPermission = false
+            peekEnabled = false
+        } else if kind != .lockScreen, actionKind == .lockScreen {
+            screenPermission = screenPermissionBeforeLock ?? true
+            screenPermissionBeforeLock = nil
+        }
+        actionKind = kind
+    }
     private var reference: ProtectedWindowRef {
         ProtectedWindowRef(bundleID: targetBundle, windowID: windowID, ownerPID: ownerPID,
                            titleDigest: titleDigest.isEmpty ? nil : titleDigest)
@@ -178,7 +200,9 @@ struct RuleDraft {
         switch kind {
         case .allDisplays: return .allDisplays
         case .displays: return .display(ids: displayIDs.sorted())
-        case .selectedRegion: return .displayRegion(id: regionDisplayID, normalizedRect: rectangle)
+        case .selectedRegion:
+            if let desktopSpace { return .desktopRegion(id: regionDisplayID, normalizedRect: rectangle, desktop: desktopSpace) }
+            return .displayRegion(id: regionDisplayID, normalizedRect: rectangle)
         case .window: return .window(reference)
         case .region:
             var ref = reference
@@ -204,6 +228,7 @@ struct RuleDraft {
         case .warnThenBlur: action = .warnThenBlur(delay: delay, sound: sound)
         case .warnOnly: action = .warnOnly(delay: delay, sound: sound)
         case .pause: action = .pauseOtherProtection(duration: indefinitePause ? nil : pauseDuration, target: pauseHeadsOnly ? .headTurn : .all)
+        case .lockScreen: action = .lockScreen
         }
         var guards: [ProtectionGuard] = []
         if ownerVerification { guards.append(.ownerVerification) }
@@ -226,10 +251,14 @@ struct RuleDraft {
     }
     var allowedScopes: [RuleScopeKind] {
         let ref = ProtectedWindowRef(bundleID: "example.app", titleDigest: String(repeating: "a", count: 64))
-        return RuleScopeKind.allCases.filter { kind in
+        var kinds = RuleScopeKind.allCases.filter { kind in
             var candidate = probe; candidate.scope = scope(kind, reference: ref)
             return !ProtectionRuleValidator.validate(candidate).contains(.invalidCombination)
         }
+        // New rules pick concrete displays; keep All displays only when an
+        // existing rule already uses it so editing cannot silently change it.
+        if !keepsAllDisplays { kinds.removeAll { $0 == .allDisplays } }
+        return kinds
     }
     var allowedActions: [RuleActionKind] {
         let ref = ProtectedWindowRef(bundleID: "example.app", titleDigest: String(repeating: "a", count: 64))
@@ -240,6 +269,7 @@ struct RuleDraft {
             case .warnThenBlur: candidate.action = .warnThenBlur(delay: 120, sound: true)
             case .warnOnly: candidate.action = .warnOnly(delay: 120, sound: true)
             case .pause: candidate.action = .pauseOtherProtection(duration: nil)
+            case .lockScreen: candidate.action = .lockScreen
             }
             return !ProtectionRuleValidator.validate(candidate).contains(.invalidCombination)
         }
@@ -277,3 +307,4 @@ extension RuleValidationError {
         }
     }
 }
+

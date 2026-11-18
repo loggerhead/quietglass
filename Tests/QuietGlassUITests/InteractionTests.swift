@@ -97,7 +97,7 @@ final class InteractionTests: XCTestCase {
 
     func testCompactNotchUsesAccessibleControls() {
         launch(["--compact-notch"])
-        element("Automatic detection").click()
+        element("Automatic protection").click()
         XCTAssertEqual(element("fixture.last-action").label, "automaticDetection")
         button("Settings").click()
         XCTAssertEqual(element("fixture.last-action").label, "settings")

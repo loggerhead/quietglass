@@ -8,7 +8,9 @@ import ShieldCore
 struct QuietGlassApp {
     @MainActor static func main() {
         let app = NSApplication.shared
-        app.setActivationPolicy(.accessory)
+        // Keep a Dock icon so the main window can always be reopened after it
+        // is closed; the menu bar icon can be hidden when the menu bar is full.
+        app.setActivationPolicy(.regular)
         let delegate = AppDelegate()
         app.delegate = delegate
         withExtendedLifetime(delegate) { app.run() }
@@ -123,12 +125,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) { buildMenu(menu) }
-
-    func applicationDidResignActive(_ notification: Notification) {
-        if NSApp.activationPolicy() == .regular, !privacySettings.isVisible {
-            NSApp.setActivationPolicy(.accessory)
-        }
-    }
 
     private func buildMenu(_ menu: NSMenu) {
         menu.removeAllItems()

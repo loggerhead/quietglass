@@ -8,6 +8,10 @@ struct RulePermissionState: Equatable {
     var captureRejected = false
     var screenCheckPending = false
     var screenCheckUnavailable = false
+    /// A denial from the system prompt. While set, activation and polling must
+    /// not call the prompting capture API again; only explicit user actions may
+    /// re-check or open System Settings.
+    private(set) var screenPromptDenied = false
     private(set) var screenVerifiedByCaptureAPI = false
     private var lastScreenPreflight: Bool?
 
@@ -21,6 +25,9 @@ struct RulePermissionState: Equatable {
     var captureAllowed: Bool { screenGranted && !captureRejected }
     var needsCaptureRestart: Bool { screenGranted && captureRejected }
 
+    mutating func restoreScreenPromptDenial(_ denied: Bool) { screenPromptDenied = denied }
+    mutating func noteScreenPromptDenied() { screenPromptDenied = true }
+
     @discardableResult
     mutating func refresh(screen: Bool, camera: Bool, retryRejectedCapture: Bool = false) -> Bool {
         if lastScreenPreflight == true && !screen { screenVerifiedByCaptureAPI = false }
@@ -30,6 +37,7 @@ struct RulePermissionState: Equatable {
         let retry = available && (newlyGranted || (captureRejected && retryRejectedCapture))
         screenGranted = available
         cameraGranted = camera
+        if available { screenPromptDenied = false }
         if retry || !available { captureRejected = false }
         return retry
     }
@@ -41,6 +49,8 @@ struct RulePermissionState: Equatable {
         screenVerifiedByCaptureAPI = granted
         screenGranted = granted || lastScreenPreflight == true
         captureRejected = !granted && screenGranted
+        if granted { screenPromptDenied = false }
+        else if lastScreenPreflight != true { screenPromptDenied = true }
     }
 
     mutating func rejectCapture(screenPreflight: Bool) {
@@ -49,6 +59,7 @@ struct RulePermissionState: Equatable {
         lastScreenPreflight = screenPreflight
         screenGranted = screenPreflight
         captureRejected = true
+        if !screenPreflight { screenPromptDenied = true }
     }
 
     func missing(in required: Set<PermissionKind>, motionGranted: Bool) -> Set<PermissionKind> {

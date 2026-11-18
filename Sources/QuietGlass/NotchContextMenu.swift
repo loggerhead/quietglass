@@ -3,7 +3,7 @@
 import SwiftUI
 
 enum NotchMenuAction: CaseIterable {
-    case snooze, controls, protection, rules, settings, resetPosition, screen, area, window, focus, pause, resume, clear
+    case snooze, controls, protection, rules, settings, resetPosition, screen, area, window, focus, pause, resume, clear, quit
 }
 
 final class NotchMenuState: ObservableObject {
@@ -33,6 +33,8 @@ struct NotchContextMenuView: View {
             separator
             row(.snooze, "Hide for 1 hour", .clock)
             row(.resetPosition, "Move Notch Down", .dockBottom)
+            separator
+            row(.quit, "Quit QuietGlass", .power)
         }
         .padding(6)
         .frame(width: 252)

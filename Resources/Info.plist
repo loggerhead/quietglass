@@ -26,8 +26,6 @@
 	<string>Copyright © Clinton Imaro. MIT License.</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
-	<key>LSUIElement</key>
-	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>QuietGlass 使用摄像头进行头部追踪、附近的人检测以及可选的本人识别。图像仅在本机处理且不会被保存。若启用“识别我”，人脸模板会保存在本机钥匙串中。</string>
 	<key>NSHighResolutionCapable</key>

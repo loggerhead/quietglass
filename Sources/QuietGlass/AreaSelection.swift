@@ -6,6 +6,10 @@ import ShieldCore
 struct SelectedDisplayRegion: Equatable {
     let displayID: UInt32
     let normalizedRect: CGRect
+    let desktop: DesktopSpace?
+    init(displayID: UInt32, normalizedRect: CGRect, desktop: DesktopSpace? = nil) {
+        self.displayID = displayID; self.normalizedRect = normalizedRect; self.desktop = desktop
+    }
 }
 
 final class AreaSelectionPanel: NSPanel {
@@ -30,7 +34,10 @@ final class AreaSelectionController {
         returnWindow = NSApp.keyWindow
         for display in displays {
             addPanel(frame: display.frame) { area in
-                if let area { selected(SelectedDisplayRegion(displayID: display.id, normalizedRect: area)) }
+                if let area {
+                    selected(SelectedDisplayRegion(displayID: display.id, normalizedRect: area,
+                                                   desktop: DesktopSpaces.current()[display.id]))
+                }
             }
         }
         observeSpaces()

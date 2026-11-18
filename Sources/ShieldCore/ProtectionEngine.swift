@@ -4,7 +4,13 @@ import CoreGraphics
 public struct ProtectionDisplay: Equatable {
     public var id: UInt32
     public var frame: CGRect
-    public init(id: UInt32, frame: CGRect) { self.id = id; self.frame = frame }
+    /// The Desktop currently visible on this display. Nil means the adapter
+    /// could not determine it; desktop-bound rules stay conservative then.
+    public var spaceID: UInt64?
+    public var desktopNumber: Int?
+    public init(id: UInt32, frame: CGRect, spaceID: UInt64? = nil, desktopNumber: Int? = nil) {
+        self.id = id; self.frame = frame; self.spaceID = spaceID; self.desktopNumber = desktopNumber
+    }
 }
 
 /// Geometry comes from the window adapter, after occlusion and coordinate conversion.
@@ -330,6 +336,11 @@ public struct ProtectionEngine {
                     activeRules.append(status); continue
                 }
                 parameters = defaultBlur
+            case .lockScreen:
+                // Locking is a system action, not display coverage. Report the
+                // rule as active so the executor can lock once; no screen
+                // permission or Escape route is needed to lock the Mac.
+                activeRules.append(status); continue
             case .pauseOtherProtection: continue
             }
             // A usable Escape route is required before any output can cover a display.
@@ -374,8 +385,10 @@ public struct ProtectionEngine {
                         .map { $0.intersection(display.frame) }.filter(Self.validRectangle)
                     plans[index].textRegions += rectangles.map(region)
                     displayContributed = !rectangles.isEmpty
-                case .displayRegion(let id, let normalized):
+                case .displayRegion(let id, let normalized), .desktopRegion(let id, let normalized, _):
                     guard display.id == id else { continue }
+                    if case .desktopRegion(_, _, let desktop) = rule.scope,
+                       let current = display.spaceID, current != desktop.id { continue }
                     let rectangle = ScreenRegions.fromVision(normalized, in: display.frame)
                     let rectangles = ScreenRegions.visible(rectangle, behind: controlRegions)
                         .map { $0.intersection(display.frame) }.filter(Self.validRectangle)
@@ -399,6 +412,9 @@ public struct ProtectionEngine {
                 let display = displays[index]
                 let matches: Bool
                 if case .displayRegion(let id, _) = rule.scope { matches = display.id == id }
+                else if case .desktopRegion(let id, _, let desktop) = rule.scope {
+                    matches = display.id == id && (display.spaceID == nil || display.spaceID == desktop.id)
+                }
                 else if case .window(let ref) = rule.scope { matches = windows.contains { $0.matches(ref) && $0.frame.intersects(display.frame) } }
                 else { matches = true }
                 if matches {

@@ -37,6 +37,16 @@ public enum AppEvent: String, Codable, CaseIterable { case activated, windowOpen
 public enum RegionPersistence: String, Codable { case session, rememberWindowTitle }
 public enum PermissionKind: String, Codable, Hashable { case screen, camera, motion }
 
+/// A macOS Desktop (Mission Control Space) on a specific display. The ID is the
+/// stable ManagedSpaceID; the number is only the user-visible Desktop label.
+public struct DesktopSpace: Codable, Equatable, Hashable {
+    public var id: UInt64
+    public var number: Int
+    public init(id: UInt64, number: Int) {
+        self.id = id; self.number = number
+    }
+}
+
 /// Stable matching data only. Window titles and screen contents never belong here.
 public struct ProtectedWindowRef: Codable, Equatable, Hashable {
     public var bundleID: String
@@ -71,6 +81,7 @@ public enum ProtectionScope: Codable, Equatable {
     case allDisplays
     case display(ids: [UInt32])
     case displayRegion(id: UInt32, normalizedRect: CGRect)
+    case desktopRegion(id: UInt32, normalizedRect: CGRect, desktop: DesktopSpace)
     case window(ProtectedWindowRef)
     case region(ProtectedWindowRef, normalizedRect: CGRect, persistence: RegionPersistence)
     case detectedText
@@ -81,6 +92,9 @@ public enum ProtectionAction: Codable, Equatable {
     case warnThenBlur(delay: TimeInterval, sound: Bool)
     case warnOnly(delay: TimeInterval, sound: Bool)
     case pauseOtherProtection(duration: TimeInterval?, target: ProtectionPauseTarget = .all)
+    /// Locks the Mac once when the trigger becomes active. No screen capture or
+    /// blur is needed; unlocking requires the user's password.
+    case lockScreen
 }
 public enum ProtectionGuard: Codable, Equatable {
     case ownerVerification
@@ -124,27 +138,27 @@ public enum ProtectionRuleValidator {
         case .manual(let shortcut):
             if let shortcut, !validShortcut(shortcut) { errors.append(.invalidShortcut) }
             switch rule.scope { case .detectedText: scopeAllowed = false; default: scopeAllowed = true }
-            if case .blur = rule.action { actionAllowed = true } else { actionAllowed = false }
+            switch rule.action { case .blur, .lockScreen: actionAllowed = true; default: actionAllowed = false }
         case .headTurn:
             switch rule.scope { case .allDisplays, .display: scopeAllowed = true; default: scopeAllowed = false }
-            if case .blur = rule.action { actionAllowed = true } else { actionAllowed = false }
+            switch rule.action { case .blur, .lockScreen: actionAllowed = true; default: actionAllowed = false }
         case .extraFace:
-            switch rule.scope { case .allDisplays, .window, .displayRegion: scopeAllowed = true; default: scopeAllowed = false }
+            switch rule.scope { case .allDisplays, .display, .window, .displayRegion, .desktopRegion: scopeAllowed = true; default: scopeAllowed = false }
             switch rule.action { case .pauseOtherProtection: actionAllowed = false; default: actionAllowed = true }
         case .sensitiveText(let types, let phrases):
             if types.isEmpty && phrases.isEmpty { errors.append(.invalidTrigger) }
             if SensitiveText.cleanPhrases(phrases) != phrases { errors.append(.invalidTrigger) }
             if case .detectedText = rule.scope { scopeAllowed = true } else { scopeAllowed = false }
-            if case .blur = rule.action { actionAllowed = true } else { actionAllowed = false }
+            switch rule.action { case .blur, .lockScreen: actionAllowed = true; default: actionAllowed = false }
         case .appEvent(let bundleID, _):
             if bundleID.isEmpty { errors.append(.invalidTrigger) }
             switch rule.scope { case .window, .allDisplaysExceptActiveWindow: scopeAllowed = true; default: scopeAllowed = false }
-            switch rule.action { case .blur, .pauseOtherProtection: actionAllowed = true; default: actionAllowed = false }
+            switch rule.action { case .blur, .pauseOtherProtection, .lockScreen: actionAllowed = true; default: actionAllowed = false }
         case .windowTitle(let bundleID, let digest):
             if bundleID.isEmpty || !validDigest(digest) { errors.append(.invalidTrigger) }
             if case .region(let ref, _, _) = rule.scope,
                ref.bundleID == bundleID, ref.titleDigest == digest { scopeAllowed = true } else { scopeAllowed = false }
-            if case .blur = rule.action { actionAllowed = true } else { actionAllowed = false }
+            switch rule.action { case .blur, .lockScreen: actionAllowed = true; default: actionAllowed = false }
         }
         if !scopeAllowed || !actionAllowed { errors.append(.invalidCombination) }
         switch rule.scope {
@@ -152,6 +166,8 @@ public enum ProtectionRuleValidator {
             if ids.isEmpty || Set(ids).count != ids.count { errors.append(.invalidScope) }
         case .displayRegion(let id, let rect):
             if id == 0 || !validRect(rect) { errors.append(.invalidScope) }
+        case .desktopRegion(let id, let rect, let desktop):
+            if id == 0 || !validRect(rect) || desktop.id == 0 || desktop.number < 1 { errors.append(.invalidScope) }
         case .window(let ref):
             if !validWindow(ref) { errors.append(.invalidScope) }
         case .region(let ref, let rect, let persistence):
@@ -177,6 +193,8 @@ public enum ProtectionRuleValidator {
             if !delay.isFinite || delay < 0 || delay > NearbyWarningPolicy.maximumDelay { errors.append(.invalidParameters) }
         case .pauseOtherProtection(let duration, _):
             if let duration, !duration.isFinite || duration <= 0 { errors.append(.invalidParameters) }
+        case .lockScreen:
+            break
         }
         for guardCondition in rule.guards {
             switch guardCondition {

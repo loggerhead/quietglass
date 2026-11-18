@@ -4,7 +4,7 @@ import AppKit
 import SwiftUI
 
 enum AppIcon: CaseIterable {
-    case view, viewOff, play, pause, cancel, airpods, chevronDown, drag, clock, settings, controls, focus, dockBottom, area
+    case view, viewOff, play, pause, cancel, airpods, chevronDown, drag, clock, settings, controls, focus, dockBottom, area, power
 
     var path: Path {
         var path = Path()
@@ -294,6 +294,11 @@ enum AppIcon: CaseIterable {
             path.addLine(to: CGPoint(x: 11.9922, y: 15))
             path.move(to: CGPoint(x: 15, y: 11.9941))
             path.addLine(to: CGPoint(x: 9, y: 11.9941))
+        case .power:
+            path.addArc(center: CGPoint(x: 12, y: 13), radius: 7,
+                        startAngle: .degrees(-60), endAngle: .degrees(240), clockwise: false)
+            path.move(to: CGPoint(x: 12, y: 4.5))
+            path.addLine(to: CGPoint(x: 12, y: 12))
         }
         return path
     }

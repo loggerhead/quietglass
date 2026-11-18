@@ -29,6 +29,9 @@ private final class RuleRegionMarkerPanel: NSPanel {
         }), let frame = Self.frame(selection, display: ProtectionDisplay(id: selection.displayID, frame: screen.frame)) else {
             panel?.orderOut(nil); return
         }
+        if let desktop = selection.desktop, let current = DesktopSpaces.current()[selection.displayID], current.id != desktop.id {
+            panel?.orderOut(nil); return
+        }
         if panel == nil {
             let value = RuleRegionMarkerPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             value.isReleasedWhenClosed = false; value.isOpaque = false; value.backgroundColor = .clear

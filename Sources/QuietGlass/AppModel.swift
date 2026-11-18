@@ -41,6 +41,7 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
     @Published private(set) var detail = "Connect your AirPods to this Mac, then start head tracking."
     @Published private(set) var captureNotice: String?
     var screenPermission: Bool { rulePermissions.screenGranted }
+    var screenAccessDenied: Bool { rulePermissions.screenPromptDenied }
     var screenCaptureNeedsRestart: Bool { rulePermissions.needsCaptureRestart }
     @Published private(set) var restarting = false
     @Published private(set) var previewing = false
@@ -178,6 +179,12 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         trackingSource = .airPods; demoMode = false
         comfort = initial.comfort; transition = initial.transition; blur = initial.radius
         super.init()
+        let deniedBefore = appearanceValues()["screenAccessDenied"] as? Bool ?? false
+        if screenAccess() {
+            if deniedBefore { saveAppearance("screenAccessDenied", false) }
+        } else {
+            rulePermissions.restoreScreenPromptDenial(deniedBefore)
+        }
         if startsEventSources { verifyScreenPermission() }
         updates.useProtectionPreferences(read: { [weak self] in self?.presentationPreference($0) },
                                          write: { [weak self] in self?.setPresentationPreference($0, $1) })
@@ -228,7 +235,7 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
             }
         })
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.refreshRulePermissions(retryRejectedCapture: true); self?.verifyScreenPermission(); self?.loginPreference.refresh(); self?.updates.checkIfDue() }
+            Task { @MainActor in self?.refreshRulePermissions(retryRejectedCapture: true); self?.loginPreference.refresh(); self?.updates.checkIfDue() }
         })
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.recordingRuleShortcut = false }
@@ -377,7 +384,10 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
     var canRecenter: Bool { trackingSource == .camera ? enabled && cameraTracking.failure == nil && cameraPauses.isEmpty : enabled && connected && latest != nil && ProcessInfo.processInfo.systemUptime - lastSample < 1.5 }
     var hasCompletedHeadSetup: Bool { appearanceValues()["headSetupCompleted.v1"] as? Bool ?? false }
     var screenAccessPreviouslyGranted: Bool { appearanceValues()["screenAccessPreviouslyGranted"] as? Bool ?? false }
-    var screenAccessAction: String { screenAccessPreviouslyGranted ? "Restore screen access" : "Allow screen access" }
+    var screenAccessAction: String {
+        if screenAccessDenied { return "Open System Settings" }
+        return screenAccessPreviouslyGranted ? "Restore screen access" : "Allow screen access"
+    }
 
     var connectedDisplays: [(id: UInt32, name: String)] {
         NSScreen.screens.compactMap { screen in
@@ -854,14 +864,28 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Motion")!)
     }
 
-    func requestScreenPermission() {
+    func requestScreenPermission(openSettingsWhenDenied: Bool = false) {
         guard !rulePermissions.screenCheckPending else { return }
-        if !screenAccess() && !screenPermission { _ = CGRequestScreenCaptureAccess() }
-        refreshRulePermissions(retryRejectedCapture: true)
-        verifyScreenPermission()
-        if !screenPermission {
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+        if screenAccess() || screenPermission {
+            verifyScreenPermission()
+            return
         }
+        if screenAccessDenied {
+            if openSettingsWhenDenied { openScreenRecordingSettings() }
+            return
+        }
+        // Ask the system once. Re-enumerating shareable content here would
+        // show a second prompt, and a denial must not be re-requested
+        // automatically on the next activation.
+        let granted = CGRequestScreenCaptureAccess()
+        if !granted { rulePermissions.noteScreenPromptDenied() }
+        refreshRulePermissions(retryRejectedCapture: granted)
+        if granted { verifyScreenPermission() }
+        else if openSettingsWhenDenied { openScreenRecordingSettings() }
+    }
+
+    func openScreenRecordingSettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }
 
     func restartForScreenPermission() {
@@ -891,14 +915,19 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         protectionCoordinator?.send(.permission(.screen, granted: false))
     }
 
-    func verifyScreenPermission() {
+    func verifyScreenPermission(explicit: Bool = false) {
         guard startsPermissionSensors, !shuttingDown, !screenPermissionVerifier.isChecking else { return }
+        guard explicit || !screenAccessDenied else { return }
         refreshRulePermissions()
         rulePermissions.screenCheckPending = true
         rulePermissions.screenCheckUnavailable = false
         screenPermissionVerifier.start { [weak self] granted in
             guard let self, !self.shuttingDown else { return }
+            let wasDenied = self.rulePermissions.screenPromptDenied
             self.rulePermissions.completeScreenCheck(granted: granted)
+            if self.rulePermissions.screenPromptDenied != wasDenied {
+                self.saveAppearance("screenAccessDenied", self.rulePermissions.screenPromptDenied)
+            }
             self.protectionCoordinator?.send(.permission(.screen, granted: self.rulePermissions.captureAllowed))
             if granted == true {
                 self.saveAppearance("screenAccessPreviouslyGranted", true)
@@ -913,6 +942,9 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         let retry = current.refresh(screen: screenAccess(), camera: cameraPermission(), retryRejectedCapture: retryRejectedCapture)
         guard current != previous else { return }
         rulePermissions = current
+        if current.screenPromptDenied != previous.screenPromptDenied {
+            saveAppearance("screenAccessDenied", current.screenPromptDenied)
+        }
         protectionCoordinator?.send([.permission(.screen, granted: current.captureAllowed), .permission(.camera, granted: current.cameraGranted)])
         if current.screenGranted != previous.screenGranted {
             captureNotice = nil

@@ -22,6 +22,40 @@ final class ProtectionEngineTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(ProtectionRule.self, from: JSONEncoder().encode(rule)), rule)
     }
 
+    func testDesktopRegionOnlyAppliesOnItsRecordedDesktop() throws {
+        let normalized = CGRect(x: 0.25, y: 0.2, width: 0.5, height: 0.6)
+        let desktop = DesktopSpace(id: 42, number: 2)
+        let rule = ProtectionRule(name: "Desktop", trigger: .extraFace(detection: .anyFace),
+            scope: .desktopRegion(id: 2, normalizedRect: normalized, desktop: desktop), action: .blur(BlurParameters(), peek: nil))
+        var engine = try ProtectionEngine(rules: [rule])
+        func display(_ spaceID: UInt64?) -> ProtectionDisplay {
+            ProtectionDisplay(id: 2, frame: CGRect(x: -400, y: 100, width: 400, height: 300), spaceID: spaceID, desktopNumber: spaceID == 42 ? 2 : 3)
+        }
+        engine.send(.displays([display(42)]), at: 0)
+        engine.send(.permission(.screen, granted: true), at: 0)
+        engine.send(.escapeAvailability(true), at: 0)
+        XCTAssertEqual(engine.send(.nearbyMonitoring(.anyFace, true), at: 0).captureDisplayIDs, [2])
+        let covered = engine.send(.nearby(.anyFace, active: true, ownerVerified: false), at: 1)
+        XCTAssertTrue(covered.hasProtection)
+        XCTAssertEqual(covered.displays[0].regions.map(\.rectangle), [CGRect(x: -300, y: 160, width: 200, height: 180)])
+        let otherDesktop = engine.send(.displays([display(43)]), at: 3)
+        XCTAssertFalse(otherDesktop.hasProtection)
+        XCTAssertEqual(otherDesktop.captureDisplayIDs, [])
+        let unknownDesktop = engine.send(.displays([display(nil)]), at: 4)
+        XCTAssertTrue(unknownDesktop.hasProtection, "Unknown Desktop data must stay conservative")
+        XCTAssertEqual(unknownDesktop.captureDisplayIDs, [2])
+    }
+    func testLockScreenRuleReportsActivityWithoutBlurCaptureOrScreenPermission() throws {
+        let rule = ProtectionRule(name: "Lock", trigger: .extraFace(detection: .anyFace), scope: .allDisplays, action: .lockScreen)
+        var engine = try ProtectionEngine(rules: [rule])
+        engine.send(.displays([ProtectionDisplay(id: 2, frame: CGRect(x: 0, y: 0, width: 400, height: 300))]), at: 0)
+        engine.send(.nearbyMonitoring(.anyFace, true), at: 0)
+        let plan = engine.send(.nearby(.anyFace, active: true, ownerVerified: false), at: 1)
+        XCTAssertFalse(plan.hasProtection)
+        XCTAssertEqual(plan.activeRules.map(\.id), [rule.id])
+        XCTAssertEqual(plan.captureDisplayIDs, [])
+        XCTAssertEqual(plan.state, .running)
+    }
     func testCalibratedCameraStaysCoveredWhenItsPermissionIsLost() throws {
         let rule = ProtectionRule(name: "Camera", trigger: .headTurn(source: .camera), scope: .allDisplays,
             guards: [.permission(.camera), .permission(.screen), .calibrationRequired])

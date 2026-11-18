@@ -93,15 +93,17 @@ extension ProtectionRule {
         case .warnThenBlur(let delay, _): response = QG("Warns first, then blurs after %g seconds.", delay)
         case .warnOnly: response = QG("Shows a warning; never blurs automatically.")
         case .pauseOtherProtection(_, let target): response = QG(target == .headTurn ? "Temporarily pauses head tracking." : "Temporarily pauses other protection.")
+        case .lockScreen: response = QG("Locks this Mac.")
         }
         return QG("%@ %@", when, response)
     }
     var scopeTitle: String {
         switch scope {
         case .allDisplays: return QG("All displays")
-        case .display: return QG("Selected displays")
-        case .displayRegion: return QG("Selected region")
-        case .window(let ref): return QG(ref.bundleID == "$selection" ? "Choose a window each time" : "An app’s windows")
+        case .display: return QG("Specific displays")
+        case .displayRegion: return QG("Specific region")
+        case .desktopRegion(_, _, let desktop): return QG("Region on Desktop %ld", desktop.number)
+        case .window(let ref): return QG(ref.bundleID == "$selection" ? "Choose a window each time" : "Specific app")
         case .region(let ref, _, _): return QG(ref.bundleID == "$selection" ? "Choose an area each time" : "Part of a window")
         case .detectedText: return QG("Matching text")
         case .allDisplaysExceptActiveWindow: return QG("Everything except my current window")
@@ -113,6 +115,7 @@ extension ProtectionRule {
         case .warnThenBlur: return QG("Warn, then blur")
         case .warnOnly: return QG("Warn only")
         case .pauseOtherProtection(_, let target): return QG(target == .headTurn ? "Pause head-turn rules only" : "Pause other protection")
+        case .lockScreen: return QG("Lock screen")
         }
     }
 }

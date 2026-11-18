@@ -66,14 +66,18 @@ final class ProtectionCoordinator: ObservableObject {
     private var transientRules: [UUID: ProtectionRule] = [:]
     private let clock: () -> TimeInterval
     private let wallClock: () -> Date
+    private let lockScreen: () -> Bool
+    private var lockedRuleIDs = Set<UUID>()
     private var pauseWallDeadline: Date?
     private var timer: Timer?
     private var shutdownComplete = false
 
     init(store: ProtectionStore, executor: ProtectionPlanExecuting, warnings: WarningPresenter? = nil,
-         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }, wallClock: @escaping () -> Date = Date.init, runsTimer: Bool = true) throws {
+         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }, wallClock: @escaping () -> Date = Date.init, runsTimer: Bool = true,
+         lockScreen: @escaping () -> Bool = { ScreenLocker.lock() }) throws {
         self.store = store; self.executor = executor; self.clock = clock
         self.wallClock = wallClock
+        self.lockScreen = lockScreen
         self.warnings = warnings ?? WarningPresenter()
         let loaded = try store.loadOrMigrate()
         var initialEngine = try ProtectionEngine(rules: loaded.rules, defaultBlur: loaded.preferences.defaultBlur)
@@ -177,9 +181,30 @@ final class ProtectionCoordinator: ObservableObject {
         let changed = value != plan
         if changed { plan = value }
         warnings.present(value.warnings)
+        applyLockScreenRules(value, reset: clears || pauses || resumes || expires)
         executor.apply(value)
         if changed { onPlanChanged?(value) }
         return value
+    }
+
+    /// Lock rules are edge-triggered: lock once when the rule becomes active and
+    /// stay latched until its trigger clears. Suspending for the lock screen or
+    /// sleeping must not clear the latch, otherwise unlocking would lock again
+    /// immediately while the trigger is still present.
+    private func applyLockScreenRules(_ value: ProtectionPlan, reset: Bool) {
+        if reset { lockedRuleIDs.removeAll() }
+        let lockIDs = Set(document.rules.filter { rule in
+            guard rule.isEnabled else { return false }
+            if case .lockScreen = rule.action { return true }; return false
+        }.map(\.id))
+        lockedRuleIDs.formIntersection(lockIDs)
+        guard value.state == .running else { return }
+        let active = lockIDs.intersection(value.activeRules.map(\.id))
+        if !active.subtracting(lockedRuleIDs).isEmpty {
+            _ = lockScreen()
+            lockedRuleIDs.formUnion(active)
+        }
+        lockedRuleIDs.formIntersection(active)
     }
     func toggleManual(_ id: UUID) {
         let active = engine.isManuallyActivated(id)

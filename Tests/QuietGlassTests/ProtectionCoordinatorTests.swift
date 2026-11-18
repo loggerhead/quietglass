@@ -236,4 +236,28 @@ final class ProtectionCoordinatorTests: XCTestCase {
         presenter.present([ProtectionWarning(rule: status, secondsRemaining: 119, sound: true)])
         XCTAssertEqual(played, 1)
     }
+
+    @MainActor func testLockScreenRuleLocksOncePerActivationAndStaysLatchedAcrossUnlock() throws {
+        let suite = "QuietGlass.LockScreen.\(UUID())"
+        let prefs = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { prefs.removePersistentDomain(forName: suite) }
+        var locks = 0
+        let coordinator = try ProtectionCoordinator(store: ProtectionStore(storage: prefs), executor: RecordingProtectionExecutor(),
+            runsTimer: false, lockScreen: { locks += 1; return true })
+        defer { coordinator.shutdown() }
+        coordinator.prepareEscape = { true }
+        let rule = ProtectionRule(name: "Lock", trigger: .extraFace(detection: .anyFace), scope: .allDisplays, action: .lockScreen)
+        try coordinator.saveRules([rule])
+        coordinator.send([.displays([ProtectionDisplay(id: 1, frame: CGRect(x: 0, y: 0, width: 400, height: 300))]),
+                          .nearbyMonitoring(.anyFace, true)])
+        coordinator.send(.nearby(.anyFace, active: true, ownerVerified: false))
+        XCTAssertEqual(locks, 1)
+        coordinator.send(.tick)
+        XCTAssertEqual(locks, 1, "A latched lock must not repeat on every tick")
+        coordinator.suspend(); coordinator.wake(); coordinator.send(.tick)
+        XCTAssertEqual(locks, 1, "Unlocking must not immediately lock again while the trigger persists")
+        coordinator.send(.nearby(.anyFace, active: false, ownerVerified: false))
+        coordinator.send(.nearby(.anyFace, active: true, ownerVerified: false))
+        XCTAssertEqual(locks, 2, "A new activation after the trigger clears can lock again")
+    }
 }

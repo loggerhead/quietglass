@@ -45,7 +45,7 @@ final class PrivacySettingsController: NSObject, NSWindowDelegate {
         RunLoop.main.add(timer, forMode: .common)
         observation = model.objectWillChange.sink { [weak self, weak model] _ in
             Task { @MainActor in
-                if model?.privacy.instant == true { self?.window.orderOut(nil); NSApp.setActivationPolicy(.accessory) }
+                if model?.privacy.instant == true { self?.window.orderOut(nil) }
             }
         }
     }
@@ -75,7 +75,10 @@ final class PrivacySettingsController: NSObject, NSWindowDelegate {
     }
     func showUpdates() { ruleNavigation.page = .settings; show() }
 
-    func windowWillClose(_ notification: Notification) { NSApp.setActivationPolicy(.accessory) }
+    func windowWillClose(_ notification: Notification) {
+        // Keep the regular activation policy so the Dock icon stays available
+        // for reopening this window.
+    }
     func windowWillEnterFullScreen(_ notification: Notification) { fullScreen = true }
     func windowWillExitFullScreen(_ notification: Notification) { fullScreen = false }
     func windowDidEnterFullScreen(_ notification: Notification) { updateContentInsets() }
@@ -107,7 +110,6 @@ final class PrivacySettingsController: NSObject, NSWindowDelegate {
 
     func hideForAreaSelection() {
         window.orderOut(nil)
-        NSApp.setActivationPolicy(.accessory)
     }
 
     func windowDidBecomeKey(_ notification: Notification) {

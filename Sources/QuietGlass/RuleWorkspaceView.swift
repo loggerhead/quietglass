@@ -267,7 +267,7 @@ struct RuleWorkspaceView: View {
                 Spacer(minLength: 8)
                 if !missing.isEmpty { Button(QG("Grant access")) { model.guideRulePermissions([rule], force: true) }.buttonStyle(RuleButtonStyle(tone: .quiet)) }
                 if rule.requiredPermissions.contains(.screen) && model.rulePermissions.screenCheckUnavailable && !model.screenPermission {
-                    Button(QG("Check again")) { model.verifyScreenPermission() }.buttonStyle(RuleButtonStyle(tone: .quiet))
+                    Button(QG("Check again")) { model.verifyScreenPermission(explicit: true) }.buttonStyle(RuleButtonStyle(tone: .quiet))
                 }
                 if rule.requiredPermissions.contains(.screen) && model.screenCaptureNeedsRestart {
                     Button(QG("Restart QuietGlass")) { model.restartForScreenPermission() }.buttonStyle(RuleButtonStyle(tone: .quiet))
@@ -345,9 +345,9 @@ struct RuleWorkspaceView: View {
                 } else if model.screenPermission {
                     Label(QG("Granted"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 } else if model.rulePermissions.screenCheckUnavailable {
-                    Button(QG("Check again")) { model.verifyScreenPermission() }
+                    Button(QG("Check again")) { model.verifyScreenPermission(explicit: true) }
                 } else {
-                    Button(QG(model.screenAccessAction)) { model.requestScreenPermission() }
+                    Button(QG(model.screenAccessAction)) { model.requestScreenPermission(openSettingsWhenDenied: true) }
                 }
             }
             if model.screenCaptureNeedsRestart {

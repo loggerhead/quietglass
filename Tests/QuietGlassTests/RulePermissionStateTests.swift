@@ -91,4 +91,34 @@ final class RulePermissionStateTests: XCTestCase {
         let state = RulePermissionState(screenGranted: true, cameraGranted: true)
         XCTAssertEqual(state.missing(in: [.screen, .camera, .motion], motionGranted: false), [.motion])
     }
+
+    func testPromptDenialIsRememberedUntilAccessIsActuallyGranted() {
+        var state = RulePermissionState(screenGranted: false, cameraGranted: true)
+        state.screenCheckPending = true
+        state.completeScreenCheck(granted: false)
+        XCTAssertTrue(state.screenPromptDenied, "A denial with no preflight access must block automatic prompts")
+        for _ in 0..<3 { state.refresh(screen: false, camera: true) }
+        XCTAssertTrue(state.screenPromptDenied, "Polling must not forget the denial and prompt again")
+        state.refresh(screen: true, camera: true)
+        XCTAssertFalse(state.screenPromptDenied, "Granting access in System Settings clears the denial")
+        state.completeScreenCheck(granted: true)
+        XCTAssertFalse(state.screenPromptDenied)
+    }
+
+    func testRejectedCaptureSessionDoesNotLookLikeAPromptDenial() {
+        var state = RulePermissionState(screenGranted: true, cameraGranted: true)
+        state.completeScreenCheck(granted: false)
+        XCTAssertTrue(state.needsCaptureRestart)
+        XCTAssertFalse(state.screenPromptDenied, "A stale capture session needs a restart, not a new prompt")
+    }
+
+    func testRestoredDenialSurvivesUntilPreflightReportsAccess() {
+        var state = RulePermissionState(screenGranted: false, cameraGranted: true)
+        state.restoreScreenPromptDenial(true)
+        XCTAssertTrue(state.screenPromptDenied)
+        state.refresh(screen: false, camera: true)
+        XCTAssertTrue(state.screenPromptDenied)
+        state.rejectCapture(screenPreflight: false)
+        XCTAssertTrue(state.screenPromptDenied)
+    }
 }

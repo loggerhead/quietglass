@@ -315,7 +315,10 @@
 "Live camera coverage" = "实时摄像头覆盖";
 "Live camera preview of your face" = "你脸部的实时摄像头预览";
 "Live head position" = "实时头部位置";
+"Lock screen" = "锁定屏幕";
 "Lock your Mac when you leave it unattended" = "离开时请锁定 Mac";
+"Locks this Mac." = "锁定这台 Mac。";
+"Locks this Mac once when this setup activates. Unlocking requires your password; it will not lock again until the condition clears." = "此方案触发后锁定这台 Mac 一次。需要用密码解锁；在条件解除前不会再次锁定。";
 "Look around · Esc to dismiss" = "环顾四周 · 按 Esc 关闭";
 "Look at the camera" = "看向摄像头";
 "Look at the camera again" = "再次看向摄像头";
@@ -372,6 +375,7 @@
 "Open Settings" = "打开设置";
 "Open Settings to restore it" = "打开设置以恢复";
 "Open Settings to retry" = "打开设置重试";
+"Open System Settings" = "打开系统设置";
 "Open the window you want to protect first." = "请先打开要保护的窗口。";
 "Open the window you want to protect, then choose an area." = "打开要保护的窗口，然后选择区域。";
 "Owner not verified" = "未验证为本人";
@@ -791,6 +795,14 @@
 "Select an area" = "框选窗口区域";
 "Select the window or region when this rule’s shortcut is used." = "使用此规则的快捷键时选择窗口或区域。";
 "Selected displays" = "所选显示器";
+"Specific app" = "特定应用";
+"Specific displays" = "特定显示器";
+"Specific region" = "特定区域";
+"All windows of this app are protected." = "该应用的所有窗口都会被遮挡。";
+"Choose the displays this rule affects." = "选择该规则影响的显示器。";
+"Choose the window each time you use this rule." = "每次使用此规则时选择窗口。";
+"Protect all windows" = "保护所有窗口";
+"This rule currently matches one window." = "该规则目前只匹配一个窗口。";
 "Sensitive information" = "敏感信息";
 "Sensitive text matched" = "已匹配敏感文本";
 "Settings" = "设置";
@@ -832,13 +844,17 @@
 "Calibrate %@" = "校准%@";
 "%@ → %@ → %@" = "%@ → %@ → %@";
 "Close" = "关闭";
-"Automatic detection" = "自动检测";
+"Automatic protection" = "自动保护";
 "Select region" = "选择区域";
 "Selected region" = "已选区域";
 "Shortcut unavailable" = "快捷键不可用";
 "Move to any display and press %@ to select a region." = "切换到任意屏幕后，按 %@ 即可选择区域。";
 "Drag to select a region on any display. Escape cancels selection." = "在任意屏幕上拖拽选择区域，按 Escape 取消。";
 "Selected region on %@" = "已选择 %@ 上的区域";
+"Selected region on %@ · Desktop %ld" = "已选择 %@ 上的区域 · Desktop %ld";
+"Region on Desktop %ld" = "Desktop %ld 上的区域";
+"This area is protected only on Desktop %ld." = "该区域只在 Desktop %ld 上生效。";
+"This area is not bound to a Desktop." = "该区域未绑定到 Desktop。";
 "%ld%% × %ld%% of the display" = "占显示器的 %ld%% × %ld%%";
 "On" = "开启";
 
@@ -960,7 +976,7 @@
 "Seconds" = "秒";
 
 "Screen controls" = "手动遮挡与状态";
-"Auto & shortcuts" = "自动检测与快捷键";
+"Auto & shortcuts" = "自动保护与快捷键";
 "Hide content by hand" = "立即手动遮挡";
 "Choose when to respond" = "设置何时自动响应";
 "Devices and preferences" = "权限、校准与偏好";
@@ -1041,7 +1057,7 @@
 
 "Workspace presets" = "场景偏好";
 "Apply blur strength and head sensitivity for your workspace; these presets also choose whether to keep only the current window clear." = "按场景调整模糊强度与转头灵敏度，同时选择是否仅显示当前窗口。";
-"Open auto & shortcuts" = "设置自动检测与快捷键";
+"Open auto & shortcuts" = "设置自动保护与快捷键";
 
 "Camera picture in picture" = "摄像头画中画";
 "Picture in Picture" = "画中画";
@@ -1077,7 +1093,7 @@
 "Selected area · This setup applies here" = "已选区域 · 此方案作用于这里";
 "Clear shortcut" = "清除快捷键";
 "Set shortcut…" = "设置快捷键…";
-"No automatic setup is currently active or available to resume. Review enabled setups and their conditions in Auto & shortcuts." = "当前没有生效或可恢复的自动方案。请在“自动检测与快捷键”中检查方案开关和运行条件。";
+"No automatic setup is currently active or available to resume. Review enabled setups and their conditions in Auto & shortcuts." = "当前没有生效或可恢复的自动方案。请在“自动保护与快捷键”中检查方案开关和运行条件。";
 "Changes only the currently active automatic setups." = "仅切换当前生效的自动方案。";
 "Nearby people alert" = "附近人脸提醒";
 "QuietGlass hint" = "QuietGlass 提示";

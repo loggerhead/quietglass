@@ -48,11 +48,11 @@ Manual screen blur, window protection, area protection, and Focus mode work with
 1. Download the DMG above, open it, and drag **QuietGlass** into **Applications**. A [ZIP](https://github.com/clintonimaroo/quietglass/releases/download/v0.1.2/QuietGlass-0.1.2-macOS-universal.zip) is also available. Quit an older copy before replacing it.
 2. Open QuietGlass from Applications, then eject the installer.
 3. Grant **Screen Recording** access when prompted. Allow Camera or Motion & Fitness only for the features you enable.
-4. Use the QuietGlass menu bar icon or hover over the floating control bar to open controls and Settings.
+4. Use the QuietGlass menu bar icon, the Dock icon, or hover over the floating control bar to open controls and Settings.
 
 The current download is locally signed and not Apple-notarized. If macOS blocks the first launch, follow the **Open Anyway** instructions included in the download.
 
-Choose **QuietGlass Help** from the menu for an offline setup and troubleshooting guide. Closing Settings keeps QuietGlass running; choose **Quit QuietGlass** to stop it. Enable **Launch at login** in **Settings → General and appearance** if desired. Use **Check for Updates…** to check for a newer public release, then download it, quit the app, and replace it in Applications. Automatic checks are optional; installation is manual. Your preferences stay on your Mac.
+Choose **QuietGlass Help** from the menu for an offline setup and troubleshooting guide. Closing Settings keeps QuietGlass running; click the Dock icon or use the menu bar icon to reopen Settings. Choose **Quit QuietGlass** to stop it. Enable **Launch at login** in **Settings → General and appearance** if desired. Use **Check for Updates…** to check for a newer public release, then download it, quit the app, and replace it in Applications. Automatic checks are optional; installation is manual. Your preferences stay on your Mac.
 
 ### Protect with rules
 
@@ -60,7 +60,7 @@ The notch automatic-detection switch changes only currently active automatic set
 
 The workspace has three destinations: **Screen controls**, **Auto & shortcuts**, and **Settings**.
 
-For manual and nearby-face rules, **Scope → Select region** opens screenshot-style selection on every display. Set its global shortcut to the right of the button to select while working on another display. A dashed border and caption mark the chosen region while editing. Selection updates the rule draft; **Save rule** commits it. Display regions stay relative to their selected display, while window regions continue to follow their matching windows.
+For manual and nearby-face rules, **Scope → Specific region** opens screenshot-style selection on every display. Set its global shortcut to the right of the button to select while working on another display. A dashed border and caption mark the chosen region while editing. Selection updates the rule draft; **Save rule** commits it. Display regions stay relative to their selected display, while window regions continue to follow their matching windows.
 Closing it keeps protection running.
 
 - **Screen controls** shows active rule names, IDs, reasons, display coverage, and warnings. Use **Blur screen now**, **Select an area**, **Protect a window**, or **Focus** to activate or create manual rules. **Pause**, **Resume**, and **Clear all · Escape** apply globally.
@@ -142,6 +142,10 @@ The build script produces:
 ```
 
 The app is built for the current Mac’s architecture. Standard builds use the bundled recognition model and require no API keys or additional model downloads.
+
+### Local signing
+
+Screen Recording and Camera grants are tied to the app’s code signature. Ad-hoc builds use the binary hash as their identity, so macOS asks for access again after every rebuild. For local development, create a code-signing certificate named `QuietGlass Local Development` in Keychain Access (Certificate Assistant → Create a Certificate → Code Signing), or install an Apple Development certificate. `build.sh` detects either automatically; `QUIETGLASS_SIGN_IDENTITY` overrides the choice. Switching to a stable identity requires one final re-grant.
 
 For universal DMG and ZIP packaging, see the [release guide](RELEASING.md).
 
