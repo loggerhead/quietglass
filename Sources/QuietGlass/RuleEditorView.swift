@@ -268,6 +268,9 @@ struct RuleEditorView: View {
                 RuleSettingRow(title: "Blur strength") {
                     HStack(spacing: 10) { Slider(value: $draft.blur.radius, in: 10...70, step: 1).frame(width: 190); Text(draft.blur.radius, format: .number.precision(.fractionLength(0))).monospacedDigit().frame(width: 25) }
                 }
+                BlurSamplePreview(strength: draft.blur.radius)
+                    .frame(maxWidth: 390)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 if draft.triggerKind == .headTurn {
                     RuleSettingRow(title: "Start angle") { Slider(value: $draft.blur.comfort, in: 2...30, step: 1).frame(width: 220) }
                     RuleSettingRow(title: "Transition angle") { Slider(value: $draft.blur.transition, in: 5...30, step: 1).frame(width: 220) }

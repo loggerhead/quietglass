@@ -26,12 +26,17 @@ final class RegionalRenderingTests: XCTestCase {
                            bounds: CGRect(x: x, y: y, width: 1, height: 1), format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
             return result
         }
+        // The renderer works at half resolution, so sample the scaled output.
+        let scale = DisplayBlurRenderer.renderScale
         for (x, y, reference) in [(50, 50, low), (150, 150, low), (250, 250, high)] {
-            let actual = pixel(composite, x: x, y: y), expected = pixel(reference, x: x, y: y)
+            let actual = pixel(composite, x: Int(CGFloat(x) * scale), y: Int(CGFloat(y) * scale))
+            let expected = pixel(reference, x: Int(CGFloat(x) * scale), y: Int(CGFloat(y) * scale))
             for component in 0..<4 { XCTAssertLessThanOrEqual(abs(Int(actual[component]) - Int(expected[component])), 2) }
         }
-        XCTAssertNotEqual(pixel(low, x: 150, y: 150), pixel(high, x: 150, y: 150), "The reference must distinguish the two blur strengths")
-        let outside = pixel(composite, x: 350, y: 250)
+        XCTAssertNotEqual(pixel(low, x: Int(150 * scale), y: Int(150 * scale)),
+                          pixel(high, x: Int(150 * scale), y: Int(150 * scale)),
+                          "The reference must distinguish the two blur strengths")
+        let outside = pixel(composite, x: Int(350 * scale), y: Int(250 * scale))
         XCTAssertEqual(outside[3], 255); XCTAssertLessThan(outside[0], 30, "Unprotected pixels in the private composite stay opaque/dark")
     }
 

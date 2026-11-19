@@ -9,11 +9,13 @@ private final class PictureCamera: NearbyCameraSession {
     let completion: (Result<NearbyFaceSample, NearbyCameraFailure>) -> Void
     var starts = 0, stops = 0
     var recognition = false
+    var previewEnabled = false
     var deviceID: String?
     init(_ completion: @escaping (Result<NearbyFaceSample, NearbyCameraFailure>) -> Void) { self.completion = completion }
     func start() { starts += 1 }
     func stop() { stops += 1 }
     func configureRecognition(_ enabled: Bool) { recognition = enabled }
+    func configurePreview(_ enabled: Bool) { previewEnabled = enabled }
     func configureDevice(_ id: String?) { deviceID = id }
 }
 
@@ -67,29 +69,6 @@ final class CameraPictureInPictureTests: OptInDesktopTestCase {
         XCTAssertTrue(viewer.running); XCTAssertTrue(viewer.session === viewerCamera.session)
     }
 
-    @MainActor func testPreviewThrottlesAfterFaceFreeSamplesAndRestoresOnFace() async {
-        _ = NSApplication.shared
-        var now = 10.0
-        var camera: PictureCamera!
-        let viewer = CameraPictureInPicture(access: { true }, makeCamera: { camera = PictureCamera($0); return camera }, clock: { now })
-        defer { viewer.close() }
-        viewer.show(cameraID: "A"); await settle()
-        XCTAssertFalse(viewer.previewIdle)
-        camera.completion(.success(NearbyFaceSample(count: 0, capturedAt: now))); await settle()
-        XCTAssertFalse(viewer.previewIdle, "The first face-free sample must not throttle")
-        now = 10.7
-        camera.completion(.success(NearbyFaceSample(count: 0, capturedAt: now))); await settle()
-        XCTAssertTrue(viewer.previewIdle)
-        camera.completion(.success(NearbyFaceSample(count: 1, capturedAt: now))); await settle()
-        XCTAssertFalse(viewer.previewIdle, "A face restores the full preview rate")
-        now = 11
-        camera.completion(.success(NearbyFaceSample(count: 0, capturedAt: now))); await settle()
-        XCTAssertFalse(viewer.previewIdle)
-        now = 11.4
-        camera.completion(.success(NearbyFaceSample(count: 0, capturedAt: now))); await settle()
-        XCTAssertTrue(viewer.previewIdle)
-    }
-
     @MainActor func testSleepAndInactiveSessionPauseUntilAllReasonsClear() async {
         _ = NSApplication.shared
         var cameras: [PictureCamera] = []
@@ -111,8 +90,10 @@ final class CameraPictureInPictureTests: OptInDesktopTestCase {
         protection.configureDevice("A"); protection.configureRecognition(true); protection.start()
         viewer.configureDevice("A"); viewer.start(); await hub.flush()
         XCTAssertEqual(cameras.count, 1); XCTAssertTrue(cameras[0].recognition)
+        XCTAssertTrue(cameras[0].previewEnabled)
         XCTAssertTrue(viewer.previewSession === cameras[0].session)
         viewer.stop(); await hub.flush(); XCTAssertEqual(cameras[0].stops, 0)
+        XCTAssertFalse(cameras[0].previewEnabled)
         var rejected = false
         let other = SharedFaceCamera(hub: hub, previewOnly: true, completion: { if case .failure(.configuration) = $0 { rejected = true } })
         other.configureDevice("B"); other.start(); await hub.flush()

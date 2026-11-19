@@ -5,10 +5,7 @@ import SwiftUI
 
 struct BlurStrengthControl: View {
     @Binding var strength: Double
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let accent: Color
-    private static let previewImage = Bundle.main.url(forResource: "BlurPreview", withExtension: "png").flatMap { NSImage(contentsOf: $0) }
-    private static let previewVideo = Bundle.main.url(forResource: "BlurPreview", withExtension: "mp4")
 
     var body: some View {
         HStack(alignment: .top, spacing: 20) {
@@ -23,7 +20,7 @@ struct BlurStrengthControl: View {
             .padding(.top, 4)
 
             VStack(spacing: 14) {
-                preview
+                BlurSamplePreview(strength: strength)
                 PrivacyLevelSlider(value: $strength, accent: accent,
                                    label: "Privacy blur strength", valueLabel: "\(Int(strength))")
                 Text("Applies to full-screen, window, and detected-text blur.")
@@ -36,8 +33,16 @@ struct BlurStrengthControl: View {
         }
         .padding(.vertical, 8)
     }
+}
 
-    private var preview: some View {
+/// The sample scene shared by the default blur control and the rule editor.
+struct BlurSamplePreview: View {
+    let strength: Double
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private static let previewImage = Bundle.main.url(forResource: "BlurPreview", withExtension: "png").flatMap { NSImage(contentsOf: $0) }
+    private static let previewVideo = Bundle.main.url(forResource: "BlurPreview", withExtension: "mp4")
+
+    var body: some View {
         ZStack(alignment: .top) {
             sampleScene
                 .accessibilityHidden(true)

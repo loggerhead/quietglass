@@ -43,9 +43,9 @@
   <li><strong>Head tracking feels off:</strong> face your screen and use <strong>Recenter</strong> in Settings → Permissions and calibration. Recalibrate after reconnecting AirPods or changing where you sit.</li>
   <li><strong>Camera is unavailable:</strong> check Camera permission, close another app using that camera if necessary, and retry camera access from Settings → Permissions and calibration.</li>
   <li><strong>A face prompt does not advance:</strong> sit alone in even light, keep your face visible, and turn your head slightly in the requested direction. Turn with your head, not just your eyes. If needed, cancel and use <strong>Set up again</strong>.</li>
-  <li><strong>Detection is off:</strong> your choice is remembered, including when Escape turns it off. Monitoring pauses while the Mac is asleep or inactive and resumes when you return.</li>
+  <li><strong>Detection is off:</strong> check that at least one automatic setup is switched on. Escape clears current protection without switching setups off. Monitoring pauses while the Mac is asleep or inactive and resumes when you return.</li>
 </ul>
-<p>Configurable shortcuts start empty. This update also clears previously saved bindings once; new assignments persist. Escape remains available to clear protection. Settings retains the default blur sample preview. Screen Recording and Camera show a red dot when access is missing; enabling a setup that needs access guides you to grant it. The notch automatic switch changes only currently active automatic setups.</p>
+<p>Configurable shortcuts start empty. This update also clears previously saved bindings once; new assignments persist. Escape remains available to clear protection. Settings retains the default blur sample preview. Screen Recording and Camera show a red dot when access is missing; enabling a setup that needs access guides you to grant it. The notch automatic switch reflects whether any automatic setup is on. Turning it off switches every automatic setup off; turning it back on restores the setups it switched off. Escape only clears current protection, so the switch stays on and shows the runtime state.</p>
 <p>Permission indicators name the unavailable access. Requirements and access shows current Screen Recording and Camera authorization with explicit status marks. QuietGlass refreshes these when you return from System Settings. If access is granted but the capture session is rejected, use Restart QuietGlass instead of granting the same permission again.</p>
 <p>Every launch checks Screen Recording through ScreenCaptureKit as well as the system preflight, and checks Camera authorization again. While the screen check runs, the app shows Checking access. Successful ScreenCaptureKit verification is valid only for that process; it is never copied into a later launch. A failed or timed-out service check offers Check again instead of calling it a denied permission. After you deny Screen Recording, QuietGlass does not ask again automatically; use the permission row to open System Settings, then return to the app.</p>
 <h2>Privacy and screen visibility</h2>
@@ -62,7 +62,7 @@
 <p>附近人脸触发条件可选择面向屏幕或任何额外人脸，各检测模式共享摄像头。窗口或区域规则保护所选窗口或框选区域；敏感信息规则仅模糊本地匹配文本，可选择类型和自定义短语。应用事件规则在应用进入前台或匹配窗口打开时保护窗口，也可仅暂停转头规则。</p>
 <p>附近人脸规则可选择先警告再模糊、仅警告或立即模糊。仅警告不会自动升级，可用立即模糊升级。专注保留当前窗口清晰，并暂停转头规则。保存的区域通过窗口标题摘要匹配，不保存标题文本。</p>
 <p>权限提示会标明具体缺少的权限。“运行要求与权限”显示屏幕录制、摄像头的实时授权状态。返回应用时会重新检查权限；已授权但捕获会话被拒绝时，请使用“重启 QuietGlass”，无需重复授权。</p>
-<p>所有可配置快捷键默认留空，本次更新也会一次性清空旧快捷键，之后你重新设置的快捷键会保留。Escape 仍用于清除保护。“默认模糊强度”保留效果预览；屏幕录制、摄像头缺少权限时显示红点，启用需要该权限的方案时会引导授权。刘海栏“自动检测”只切换当前生效的自动方案，其他方案开关保持不变。</p>
+<p>所有可配置快捷键默认留空，本次更新也会一次性清空旧快捷键，之后你重新设置的快捷键会保留。Escape 仍用于清除保护。“默认模糊强度”保留效果预览；屏幕录制、摄像头缺少权限时显示红点，启用需要该权限的方案时会引导授权。刘海栏“自动方案”开关反映是否还有自动方案处于开启状态：关闭会统一关闭全部自动方案，再次开启会恢复由它关闭的方案。按 Escape 只清除当前保护，不改写方案开关；开关保持开启，并显示当前运行状态。</p>
 <p>原有配置自动迁移为本地规则，并保留原始配置与备份。迁移不会重复生成规则，失败时保留数据供重试。人脸模板保存在钥匙串中，摄像头画面与识别文本不会保存。删除模板不会移除规则的主人验证条件。</p>
 </div>
 <h2>Updates and support</h2>

@@ -16,7 +16,8 @@ final class WarningPresenter: ObservableObject {
     var visible = true { didSet { present(warnings) } }
     init(makeSound: @escaping @MainActor () -> NearbyNoticeSound = { NearbyNoticeSound() }) { self.makeSound = makeSound }
     func present(_ values: [ProtectionWarning]) {
-        warnings = values
+        // Identical frames must not invalidate the SwiftUI graph.
+        if values != warnings { warnings = values }
         let ids = Set(values.map(\.id))
         sounds = sounds.filter { ids.contains($0.key) }
         for warning in values {

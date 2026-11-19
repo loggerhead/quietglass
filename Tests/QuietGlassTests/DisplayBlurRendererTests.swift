@@ -43,7 +43,7 @@ final class DisplayBlurRendererTests: XCTestCase {
             let empty = CIImage(color: .clear).cropped(to: CGRect(x: 0, y: 0, width: size, height: size))
             let image = try XCTUnwrap(renderer.render(empty, radius: 0))
             let bytes = pixels(image)
-            XCTAssertEqual(image.width, size)
+            XCTAssertEqual(image.width, Int(CGFloat(size) * DisplayBlurRenderer.renderScale))
             for index in stride(from: 3, to: bytes.count, by: 4) { XCTAssertEqual(bytes[index], 255) }
         }
     }

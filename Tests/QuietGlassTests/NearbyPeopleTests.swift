@@ -86,6 +86,19 @@ final class NearbyPeopleTests: XCTestCase {
         XCTAssertFalse(h.nearby.covered)
     }
 
+    @MainActor func testSteadyFramesDoNotRepublishUnchangedState() async {
+        let h = NearbyHarness(); defer { h.finish() }
+        await h.start()
+        await h.send(1, at: 1)
+        var emissions = 0
+        let token = h.nearby.objectWillChange.sink { _ in emissions += 1 }
+        defer { token.cancel() }
+        await h.send(1, at: 1.2); await h.send(1, at: 1.4); await h.send(1, at: 1.6)
+        XCTAssertEqual(emissions, 0, "Unchanged samples must not invalidate observers")
+        await h.send(2, at: 1.8)
+        XCTAssertGreaterThan(emissions, 0, "A real detection change must still publish")
+    }
+
     @MainActor func testTimedPauseStopsCameraAndResumesAtDeadlineWithoutStaleCallbacks() async {
         let h = NearbyHarness(); defer { h.finish() }
         await h.start(); let original = h.cameras[0]
@@ -347,7 +360,7 @@ final class NearbyPeopleTests: XCTestCase {
         }
     }
 
-    @MainActor func testSleepAndSessionPausesPreserveSelectionUntilEveryReasonClears() async {
+    @MainActor func testSleepSessionAndLockPausesPreserveSelectionUntilEveryReasonClears() async {
         let h = NearbyHarness()
         defer { h.finish() }
         await h.start()
@@ -355,6 +368,7 @@ final class NearbyPeopleTests: XCTestCase {
         h.nearby.suspend(for: .systemSleep)
         h.nearby.suspend(for: .displaySleep)
         h.nearby.suspend(for: .inactiveSession)
+        h.nearby.suspend(for: .screenLocked)
         XCTAssertTrue(original.stopped)
         XCTAssertTrue(h.nearby.wantsMonitoring)
         XCTAssertTrue(h.binding.primary.isEnabled)
@@ -365,6 +379,7 @@ final class NearbyPeopleTests: XCTestCase {
         XCTAssertFalse(h.nearby.covered)
         h.nearby.resume(after: .systemSleep)
         h.nearby.resume(after: .displaySleep)
+        h.nearby.resume(after: .screenLocked)
         await h.settle()
         XCTAssertFalse(h.nearby.enabled)
         XCTAssertEqual(h.cameras.count, 1)

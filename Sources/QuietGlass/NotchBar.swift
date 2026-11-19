@@ -288,7 +288,7 @@ final class NotchBarController: NSObject, NSWindowDelegate, NSPopoverDelegate {
         guard ProcessInfo.processInfo.systemUptime - lastDragEnded > 0.2 else { return }
         guard state.expanded else { hover(true); return }
         switch action {
-        case .automaticDetection: model.setAutomaticDetection(!model.automaticDetectionEnabled)
+        case .automaticDetection: model.toggleAutomaticSetups()
         case .settings:
             closeControls()
             showHint(nil)
@@ -661,11 +661,11 @@ struct NotchBarView: View {
         let height: CGFloat = primary && vertical ? 48 : 30
         let content = ZStack {
             Capsule()
-                .fill(primary && !state.expanded && model.nearbyNeedsAttention ? Color.orange : Color.black)
+                .fill(primary && !state.expanded && model.automaticRuntimeNeedsAttention ? Color.orange : Color.black)
                 .frame(width: primary && !state.expanded ? (vertical ? 8 : 40) : width,
                        height: primary && !state.expanded ? (vertical ? 40 : 8) : height)
             AppIconView(icon: icon, size: 18)
-                .foregroundStyle(primary && model.automaticDetectionEnabled ? Color.green : primary && model.nearbyNeedsAttention ? Color.orange : .white)
+                .foregroundStyle(primary && model.automaticRuntimeNeedsAttention ? Color.orange : primary && model.automaticSetupsEnabled ? Color.green : .white)
                 .opacity(state.expanded ? 1 : 0)
                 .scaleEffect(state.expanded ? 1 : 0.7)
         }
@@ -673,7 +673,7 @@ struct NotchBarView: View {
         .contentShape(Capsule())
         return Group {
             if primary {
-                Toggle(isOn: Binding(get: { model.automaticDetectionEnabled }, set: { _ in action(item) })) {
+                Toggle(isOn: Binding(get: { model.automaticSetupsEnabled }, set: { _ in action(item) })) {
                     content
                 }.toggleStyle(.button)
             } else {
@@ -681,15 +681,15 @@ struct NotchBarView: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityValue(primary ? QG(model.automaticDetectionEnabled ? "On" : "Off") : "")
-        .accessibilityLabel(QG(primary && !state.expanded ? (model.nearbyNeedsAttention ? QG(model.nearbyNoticeTitle) : "QuietGlass notch") : label(item)))
-        .accessibilityHint(QG(primary && !state.expanded ? "Hover to reveal controls, or right-click for settings" : ""))
+        .accessibilityValue(primary ? QG(model.automaticSetupsEnabled ? "On" : "Off") : "")
+        .accessibilityLabel(QG(primary && !state.expanded ? (model.automaticRuntimeNeedsAttention ? QG(model.nearbyNoticeTitle) : "QuietGlass notch") : label(item)))
+        .accessibilityHint(primary ? (state.expanded ? model.automaticRuntimeSummary : QG("Hover to reveal controls, or right-click for settings")) : "")
         .onHover { hint($0 && state.expanded ? item : nil) }
     }
 
     private func label(_ item: NotchAction) -> String {
         switch item {
-        case .automaticDetection: return "Automatic protection"
+        case .automaticDetection: return "Automatic setups"
         case .settings: return "Settings"
         case .area: return "Choose content…"
         case .quit: return "Quit QuietGlass"
@@ -705,7 +705,8 @@ private struct NotchHintView: View {
         HStack(spacing: 5) {
             Text(QG(label))
             if action == .automaticDetection {
-                Text(QG(model.automaticDetectionEnabled ? "On" : "Off")).foregroundStyle(model.automaticDetectionEnabled ? .green : .secondary)
+                Text(model.automaticRuntimeSummary)
+                    .foregroundStyle(model.automaticRuntimeNeedsAttention ? Color.orange : model.automaticSetupsEnabled ? Color.green : Color.secondary)
             }
         }
         .font(.system(size: 13))
@@ -718,7 +719,7 @@ private struct NotchHintView: View {
 
     private var label: String {
         switch action {
-        case .automaticDetection: return "Automatic protection"
+        case .automaticDetection: return "Automatic setups"
         case .settings: return "Settings"
         case .area: return "Choose content…"
         case .quit: return "Quit QuietGlass"
@@ -757,9 +758,17 @@ struct NotchControlsView: View {
                 Spacer()
                 Button(QG("Close"), action: close).buttonStyle(RuleButtonStyle(tone: .quiet))
             }
-            RuleSettingRow(title: "Automatic protection", detail: "Changes only the currently active automatic setups.") {
-                Toggle(QG("Automatic protection"), isOn: Binding(get: { model.automaticDetectionEnabled }, set: model.setAutomaticDetection))
+            RuleSettingRow(title: "Automatic setups", detail: "Switch every automatic setup on or off. Clearing protection keeps them on.") {
+                Toggle(QG("Automatic setups"), isOn: Binding(get: { model.automaticSetupsEnabled }, set: model.setAutomaticDetection))
                     .labelsHidden().toggleStyle(RuleToggleStyle(showsLabel: false))
+            }
+            HStack(spacing: 6) {
+                Text(model.automaticRuntimeSummary).font(.system(size: 12))
+                    .foregroundStyle(model.automaticRuntimeNeedsAttention ? Color.orange : RulePalette.secondary)
+                Spacer(minLength: 8)
+                if model.automaticRuntimeNeedsResume {
+                    Button(QG("Resume")) { model.setAutomaticDetection(true) }
+                }
             }
             Text(QG(model.status)).font(.system(size: 12)).foregroundStyle(RulePalette.secondary).lineLimit(3)
             if let coordinator = model.protectionCoordinator {

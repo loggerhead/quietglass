@@ -5,25 +5,39 @@ import ShieldCore
 
 enum OwnerModelError: Error { case unavailable, invalidOutput }
 
-enum OwnerFaceDetector {
-    static func observations(in buffer: CVPixelBuffer) throws -> [VNFaceObservation] {
-        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up, options: [:])
+/// Reuses one Vision sequence handler and one pair of configured requests so
+/// steady-state frames do not pay for object setup. Instantiated and used only
+/// on the camera's serial queue.
+final class OwnerFaceDetector {
+    private let handler = VNSequenceRequestHandler()
+    private let detector: VNDetectFaceRectanglesRequest
+    private let landmarks: VNDetectFaceLandmarksRequest
+
+    init() {
         // A landmarks request on its own uses the older internal face detector,
         // whose yaw is quantized to 0 / +/- pi/4. Detect explicitly with revision
         // 3, then preserve those continuous poses while locating the landmarks.
-        let detector = VNDetectFaceRectanglesRequest()
+        detector = VNDetectFaceRectanglesRequest()
         detector.revision = VNDetectFaceRectanglesRequestRevision3
-        try handler.perform([detector])
+        landmarks = VNDetectFaceLandmarksRequest()
+        landmarks.revision = VNDetectFaceLandmarksRequestRevision3
+    }
+
+    func observations(in buffer: CVPixelBuffer) throws -> [VNFaceObservation] {
+        try handler.perform([detector], on: buffer, orientation: .up)
         let faces = (detector.results ?? []).filter { $0.confidence >= 0.6 }
         guard !faces.isEmpty else { return faces }
-        let landmarks = VNDetectFaceLandmarksRequest()
-        landmarks.revision = VNDetectFaceLandmarksRequestRevision3
         landmarks.inputFaceObservations = faces
-        try handler.perform([landmarks])
+        try handler.perform([landmarks], on: buffer, orientation: .up)
         // Preserve the detected count if landmarks are temporarily unavailable;
         // feature extraction will reject that frame without inventing a pose.
         if let result = landmarks.results, result.count == faces.count { return result }
         return faces
+    }
+
+    /// One-shot convenience for tests and callers without a frame loop.
+    static func observations(in buffer: CVPixelBuffer) throws -> [VNFaceObservation] {
+        try OwnerFaceDetector().observations(in: buffer)
     }
 }
 

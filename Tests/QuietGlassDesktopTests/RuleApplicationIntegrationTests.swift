@@ -47,7 +47,7 @@ private final class RuleApplicationCamera: NearbyCameraSession {
 }
 
 final class RuleApplicationIntegrationTests: OptInDesktopTestCase {
-    @MainActor func testAutomaticDetectionChangesOnlyCurrentAutomaticRulesAndRestoresThoseIDs() async throws {
+    @MainActor func testAutomaticDetectionSwitchesEveryAutomaticRuleAndRestoresThem() async throws {
         let h = try RuleApplicationHarness(); defer { h.finish() }
         h.coordinator.prepareRuleBindings = { _ in true }
         let current = ProtectionRule(name: "Active app", trigger: .appEvent(bundleID: "active.app", event: .activated), scope: .window(ProtectedWindowRef(bundleID: "active.app")))
@@ -55,12 +55,14 @@ final class RuleApplicationIntegrationTests: OptInDesktopTestCase {
         let manual = ProtectionRule(name: "Manual", trigger: .manual(shortcut: nil), scope: .allDisplays)
         try h.coordinator.saveRules([current, unrelated, manual])
         h.coordinator.send([.windows([ProtectionWindow(reference: ProtectedWindowRef(bundleID: "active.app", windowID: 1), frame: CGRect(x: 10, y: 10, width: 200, height: 200))], activeWindow: nil, activeBundleID: "active.app"), .manual(manual.id, active: true)])
-        XCTAssertEqual(h.model.currentAutomaticRuleIDs, [current.id])
-        XCTAssertTrue(h.model.automaticDetectionEnabled)
+        XCTAssertTrue(h.model.automaticSetupsEnabled)
+        XCTAssertEqual(h.model.automaticRuntimeState, .protecting)
         h.model.setAutomaticDetection(false)
         XCTAssertFalse(h.coordinator.document.rules.first { $0.id == current.id }!.isEnabled)
-        XCTAssertTrue(h.coordinator.document.rules.first { $0.id == unrelated.id }!.isEnabled)
+        XCTAssertFalse(h.coordinator.document.rules.first { $0.id == unrelated.id }!.isEnabled)
+        XCTAssertTrue(h.coordinator.document.rules.first { $0.id == manual.id }!.isEnabled)
         XCTAssertTrue(h.coordinator.isManuallyActivated(manual.id))
+        XCTAssertFalse(h.model.automaticSetupsEnabled)
         h.model.setAutomaticDetection(true)
         XCTAssertTrue(h.coordinator.document.rules.first { $0.id == current.id }!.isEnabled)
         XCTAssertTrue(h.coordinator.document.rules.first { $0.id == unrelated.id }!.isEnabled)
@@ -204,13 +206,22 @@ final class RuleApplicationIntegrationTests: OptInDesktopTestCase {
         XCTAssertEqual(h.cameras.count, 1)
         let faces = [CameraFace(bounds: CGRect(x: 0.4, y: 0.3, width: 0.3, height: 0.3), yaw: 0, pitch: 0),
                      CameraFace(bounds: CGRect(x: 0, y: 0.3, width: 0.1, height: 0.1), yaw: 1.2, pitch: 0)]
+        var applied = 0
         for time in [1.0, 1.4, 1.8] {
             h.now = time
             let count = h.executor.plans.count
             h.cameras[0].completion(.success(NearbyFaceSample(count: 2, capturedAt: time, faces: faces)))
             await h.settle()
-            XCTAssertEqual(h.executor.plans.count, count + 1, "All detection modes share one event batch")
+            let delta = h.executor.plans.count - count
+            XCTAssertLessThanOrEqual(delta, 1, "All detection modes share one event batch")
+            applied += delta
         }
+        XCTAssertGreaterThanOrEqual(applied, 1, "A detection change must reach the coordinator")
+        let steady = h.executor.plans.count
+        h.now = 2.2
+        h.cameras[0].completion(.success(NearbyFaceSample(count: 2, capturedAt: 2.2, faces: faces)))
+        await h.settle()
+        XCTAssertEqual(h.executor.plans.count, steady, "An unchanged sample must not reach the coordinator")
         XCTAssertEqual(h.coordinator.plan.warnings.map(\.id), [any.id])
         XCTAssertFalse(h.coordinator.plan.hasProtection, "A face turned away must not activate the facing-screen rule")
         XCTAssertEqual(h.cameras.count, 1)
@@ -358,9 +369,30 @@ final class RuleApplicationIntegrationTests: OptInDesktopTestCase {
         for id in automaticIDs { XCTAssertTrue(try XCTUnwrap(h.coordinator.document.rules.first { $0.id == id }).isEnabled) }
         XCTAssertTrue(h.nearby.wantsMonitoring)
 
-        XCTAssertFalse(h.model.automaticDetectionEnabled)
+        XCTAssertTrue(h.model.automaticSetupsEnabled)
+        XCTAssertTrue(h.model.automaticRuntimeNeedsResume)
         h.model.setAutomaticDetection(true); await h.settle()
         XCTAssertTrue(h.nearby.enabled)
+    }
+
+    @MainActor func testNotchPressResumesClearedProtectionWithoutSwitchingSetupsOff() async throws {
+        let h = try RuleApplicationHarness(); defer { h.finish() }
+        h.coordinator.prepareRuleBindings = { _ in true }
+        h.model.setNearbyPeople(true); await h.settle()
+        XCTAssertTrue(h.model.automaticSetupsEnabled)
+        XCTAssertTrue(h.nearby.enabled)
+
+        h.model.dismissShield(); await h.settle()
+        XCTAssertTrue(h.model.automaticSetupsEnabled)
+        XCTAssertEqual(h.coordinator.plan.state, .cleared)
+        XCTAssertTrue(h.model.automaticRuntimeNeedsResume)
+        XCTAssertFalse(h.nearby.enabled)
+
+        h.model.toggleAutomaticSetups(); await h.settle()
+        XCTAssertTrue(h.model.automaticSetupsEnabled)
+        XCTAssertEqual(h.coordinator.plan.state, .running)
+        XCTAssertTrue(h.nearby.enabled)
+        XCTAssertFalse(h.model.automaticRuntimeNeedsResume)
     }
 
     @MainActor func testWarnOnlyDoesNotEscalateUntilRealBlurNowAction() async throws {

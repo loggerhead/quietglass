@@ -1,5 +1,39 @@
 import Foundation
 
+/// One camera consumer's frame-rate request, modeled after
+/// `CADisplayLink.preferredFrameRateRange`: `minimum` is what the consumer
+/// needs to stay correct, `preferred` is what it would like when affordable.
+struct CameraFrameRateDemand: Equatable {
+    var minimum: Double
+    var preferred: Double
+
+    init(minimum: Double, preferred: Double? = nil) {
+        self.minimum = minimum
+        self.preferred = max(minimum, preferred ?? minimum)
+    }
+
+    /// The picture-in-picture viewer is fluid at 15 fps and never asks the
+    /// shared device for more; under power pressure it can degrade to 10.
+    static let preview = CameraFrameRateDemand(minimum: 10, preferred: 15)
+}
+
+/// Single authority for the shared capture device rate. Consumers declare
+/// ranges instead of setting the device directly, mirroring how Core Animation
+/// arbitrates display links: satisfy the highest minimum, raise to the highest
+/// preferred only when the system is not under power pressure, then clamp into
+/// the active format.
+enum CameraFrameRateArbiter {
+    static func rate(demands: [CameraFrameRateDemand],
+                     supported: ClosedRange<Double>,
+                     constrained: Bool) -> Double? {
+        guard !demands.isEmpty else { return nil }
+        let floor = demands.map(\.minimum).max() ?? supported.lowerBound
+        let preferred = demands.map(\.preferred).max() ?? floor
+        let target = constrained ? floor : max(floor, preferred)
+        return min(max(target, supported.lowerBound), supported.upperBound)
+    }
+}
+
 /// Camera cadence for nearby-face monitoring. Pure state so the idle/active
 /// hysteresis can be verified without a physical capture device.
 struct CameraIdlePolicy {
@@ -17,17 +51,8 @@ struct CameraIdlePolicy {
     private var lastFaceAt: TimeInterval = 0
 
     /// Analysis rate implied by `analysisInterval`.
-    var framesPerSecond: Double { idle ? 5 : 10 }
+    var framesPerSecond: Double { 1 / analysisInterval }
     var analysisInterval: TimeInterval { idle ? 0.2 : 0.09 }
-
-    /// Clamps a requested hardware rate into the active format's supported
-    /// range. Idle never drops below 15 fps so the shared picture-in-picture
-    /// preview stays fluid; active asks for 30 fps for the lowest detection
-    /// latency. Formats that cannot reach a bound stay at their nearest one.
-    static func hardwareFramesPerSecond(idle: Bool, supported: ClosedRange<Double>) -> Double {
-        let requested = idle ? 15.0 : 30.0
-        return min(max(requested, supported.lowerBound), supported.upperBound)
-    }
 
     mutating func setIdle(_ value: Bool) {
         idle = value
@@ -62,32 +87,6 @@ struct CameraIdlePolicy {
         }
         guard !hardwareIdle, now - lastFaceAt >= Self.hardwareIdleDelay else { return false }
         hardwareIdle = true
-        return true
-    }
-}
-
-/// Tracks whether a viewer-only preview can drop to 15 fps. Preview clients
-/// may receive no samples at all while analysis is disabled for a
-/// preview-only camera lease, so the idle flag starts active and only
-/// throttles after face-free samples prove nobody is in front of the camera.
-struct CameraPreviewIdlePolicy {
-    static let delay: TimeInterval = 0.6
-    static let idleFramesPerSecond: Double = 15
-
-    private(set) var idle = false
-    private(set) var lastFaceAt: TimeInterval
-
-    init(now: TimeInterval) { lastFaceAt = now }
-
-    mutating func observe(faceCount: Int, at now: TimeInterval) -> Bool {
-        if faceCount > 0 {
-            lastFaceAt = now
-            guard idle else { return false }
-            idle = false
-        } else {
-            guard !idle, now - lastFaceAt >= Self.delay else { return false }
-            idle = true
-        }
         return true
     }
 }

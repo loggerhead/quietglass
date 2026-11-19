@@ -1130,3 +1130,23 @@
 "Could not verify screen access" = "暂时无法确认屏幕访问权限";
 
 "Check again" = "重新检查";
+
+"Automatic setups" = "自动方案";
+
+"Switch every automatic setup on or off. Clearing protection keeps them on." = "统一开关全部自动方案；清除当前保护不会关闭方案。";
+
+"On · Watching" = "已开启 · 监控中";
+
+"On · Protecting" = "已开启 · 正在保护";
+
+"On · Needs attention" = "已开启 · 需要处理";
+
+"On · Cleared · Tap to resume" = "已开启 · 已清除 · 点按恢复";
+
+"On · Paused · Tap to resume" = "已开启 · 已暂停 · 点按恢复";
+
+"On · Waiting for your Mac" = "已开启 · 等待 Mac 恢复";
+
+"Automatic setups: %@" = "自动方案：%@";
+
+"No automatic setup is switched on. Turn one on in Auto & shortcuts." = "没有已开启的自动方案。请在“自动保护与快捷键”中开启一个。";

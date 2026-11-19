@@ -42,7 +42,7 @@ enum NearbyCameraStatus: Equatable {
 }
 
 enum NearbyPauseReason: Hashable {
-    case systemSleep, displaySleep, inactiveSession, protectionTest, ownerEnrollment, globalPause
+    case systemSleep, displaySleep, inactiveSession, screenLocked, protectionTest, ownerEnrollment, globalPause
 }
 
 struct NearbyFaceSample {
@@ -68,6 +68,7 @@ protocol NearbyCameraSession: AnyObject {
     func configureDevice(_ id: String?)
     func configureIdle(_ idle: Bool)
     func configureAnalysis(_ enabled: Bool)
+    func configurePreview(_ enabled: Bool)
 }
 
 extension NearbyCameraSession {
@@ -76,6 +77,7 @@ extension NearbyCameraSession {
     func configureDevice(_ id: String?) {}
     func configureIdle(_ idle: Bool) {}
     func configureAnalysis(_ enabled: Bool) {}
+    func configurePreview(_ enabled: Bool) {}
 }
 
 @MainActor
@@ -253,6 +255,13 @@ final class NearbyPeople: ObservableObject {
     func setEnabled(_ value: Bool) { onRuleCommand?(.enabled(value)) }
     func retry() { if wantsMonitoring && canRetry { begin() } }
     func restore() { if wantsMonitoring && !enabled && !requesting && !canRetry { begin() } }
+    /// Re-arms monitoring after the notch switch or a rule is turned back on.
+    /// `restore()` deliberately skips cameras that stopped with an error, so
+    /// retry those as well.
+    func rearm() {
+        guard wantsMonitoring, !requesting else { return }
+        if canRetry { begin() } else { restore() }
+    }
     func blurNow() {
         let modes = configuredFaceRules.compactMap { rule -> NearbyDetection? in
             guard currentPlan?.warnings.contains(where: { $0.id == rule.id }) == true,
@@ -374,8 +383,10 @@ final class NearbyPeople: ObservableObject {
             return owner.template?.matches(identity.vector) == true && identity.pose.isValid
         }
         let ownerIndex = owners.count == 1 ? owners.first : nil
+        var changed = false
         for detection in Array(ruleFaces.keys) {
             var state = ruleFaces[detection]!
+            let previousActive = state.active, previousVerified = state.ownerVerified
             let threat = detection == .anyFace ? sample.count > 1 :
                 sample.faces.map { state.attention.observe($0, ownerIndex: nil, at: sample.capturedAt) } ?? (sample.count > 1)
             state.active = state.presence.observe(faceCount: sample.count == 0 ? 0 : threat ? 2 : 1, at: sample.capturedAt)
@@ -392,15 +403,21 @@ final class NearbyPeople: ObservableObject {
                     openEyes: owner.template?.openEyes ?? 0.3, at: sample.capturedAt, continuousFaceWithMissingLandmarks: lost)
                 if matches { state.lastMatchedBounds = bounds } else if !lost { state.lastMatchedBounds = nil }
                 if detection == self.detection {
-                    ownerPrompt = state.verification.recoveringLandmarks ? "Face the camera again" : state.verification.challenge.prompt
+                    let prompt = state.verification.recoveringLandmarks ? "Face the camera again" : state.verification.challenge.prompt
+                    if prompt != ownerPrompt { ownerPrompt = prompt }
                     updateOwnerNotice(ownerThreat ? .additionalFaces : sample.count == 0 ? .noFace : vector == nil || pose?.isValid != true ? .unreadable : matches ? .matching : .unmatched, at: sample.capturedAt)
                 }
             } else { state.ownerVerified = true }
+            if state.active != previousActive || state.ownerVerified != previousVerified { changed = true }
             ruleFaces[detection] = state
         }
-        alertActive = ruleFaces.values.contains { $0.active || (ownerRequired && !$0.ownerVerified) }
-        status = .watching(sample.count)
-        updateProtection()
+        // Published state is edge-triggered: an unchanged frame must not reach
+        // SwiftUI or the rule coordinator, so steady watching stays silent.
+        let alert = ruleFaces.values.contains { $0.active || (ownerRequired && !$0.ownerVerified) }
+        if alert != alertActive { alertActive = alert }
+        let watching = NearbyCameraStatus.watching(sample.count)
+        if watching != status { status = watching; changed = true }
+        if changed { updateProtection() }
     }
 
     private func resetOwnerNotice() {
@@ -532,11 +549,23 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
     private var analysisFailures = 0
     private var recognition = false
     private var recognizer: OwnerFaceModel?
+    // One handler and request live for the whole session; Vision results are
+    // overwritten on every perform, so per-frame allocation buys nothing.
+    private let visionHandler = VNSequenceRequestHandler()
+    private let faceRequest: VNDetectFaceRectanglesRequest = {
+        let request = VNDetectFaceRectanglesRequest()
+        request.revision = VNDetectFaceRectanglesRequestRevision3
+        return request
+    }()
+    private var ownerDetector: OwnerFaceDetector?
     private var deviceID: String?
     private var activeDevice: AVCaptureDevice?
     private var cadence = CameraIdlePolicy()
     private var analysisEnabled = true
+    private var previewEnabled = false
+    private var powerConstrained = false
     private var deliveredReadiness = false
+    private var powerObservers: [NSObjectProtocol] = []
 
     init(recognition: Bool = false, completion: @escaping (Result<NearbyFaceSample, NearbyCameraFailure>) -> Void) {
         self.recognition = recognition; self.completion = completion
@@ -547,9 +576,14 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
             guard !stopped else { return }
             recognition = enabled
             if enabled && recognizer == nil {
-                do { recognizer = try OwnerFaceModel() }
-                catch { completion(.failure(.recognition)) }
-            } else if !enabled { recognizer = nil }
+                do {
+                    recognizer = try OwnerFaceModel()
+                    ownerDetector = OwnerFaceDetector()
+                } catch { completion(.failure(.recognition)) }
+            } else if !enabled {
+                recognizer = nil
+                ownerDetector = nil
+            }
         }
     }
     func configureDevice(_ id: String?) { queue.async { [self] in deviceID = id } }
@@ -567,10 +601,19 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
             guard !stopped, analysisEnabled != enabled else { return }
             analysisEnabled = enabled
             deliveredReadiness = false
-            if !enabled {
-                cadence.setIdle(true)
-                applyFrameRate()
-            }
+            if !enabled { cadence.setIdle(true) }
+            applyFrameRate()
+        }
+    }
+
+    /// A picture-in-picture viewer keeps the shared device at the preview
+    /// floor even when analysis is off; without one the device only has to
+    /// serve Vision.
+    func configurePreview(_ enabled: Bool) {
+        queue.async { [self] in
+            guard !stopped, previewEnabled != enabled else { return }
+            previewEnabled = enabled
+            applyFrameRate()
         }
     }
 
@@ -579,8 +622,10 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
             guard !stopped else { return }
             do {
                 if recognition && recognizer == nil {
-                    do { recognizer = try OwnerFaceModel() }
-                    catch { throw NearbyCameraFailure.recognition }
+                    do {
+                        recognizer = try OwnerFaceModel()
+                        ownerDetector = OwnerFaceDetector()
+                    } catch { throw NearbyCameraFailure.recognition }
                 }
                 guard let device = CameraSelection.device(id: deviceID) else { throw NearbyCameraFailure.noCamera }
                 let input = try AVCaptureDeviceInput(device: device)
@@ -604,6 +649,8 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
                     connection.isVideoMirrored = false
                 }
                 activeDevice = device
+                powerConstrained = Self.isPowerConstrained()
+                observePowerChanges()
                 applyFrameRate()
                 observe(AVCaptureSession.runtimeErrorNotification, object: session, failure: .configuration)
                 observe(AVCaptureSession.wasInterruptedNotification, object: session, failure: .interrupted)
@@ -618,23 +665,54 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
     }
 
     /// The analysis interval in `captureOutput` bounds Vision work; this only
-    /// decides how fast the capture device itself runs. The desired rate is
-    /// clamped into the active format's supported range, so a 15–30 fps camera
-    /// idles at 15 and a face restores 30. If the device manages frame rate
-    /// automatically, leave the hardware alone.
+    /// decides how fast the capture device itself runs. Every active consumer
+    /// declares a minimum and a preferred rate, and the arbiter picks the
+    /// lowest rate that satisfies all of them, so no single consumer can raise
+    /// the device on its own. If the device manages frame rate automatically,
+    /// leave the hardware alone.
     private func applyFrameRate() {
         guard let device = activeDevice else { return }
         let ranges = device.activeFormat.videoSupportedFrameRateRanges
         guard let low = ranges.map(\.minFrameRate).min(),
               let high = ranges.map(\.maxFrameRate).max(), low <= high else { return }
-        let fps = CameraIdlePolicy.hardwareFramesPerSecond(idle: cadence.hardwareIdle, supported: low...high)
-        guard ranges.contains(where: { $0.minFrameRate <= fps && $0.maxFrameRate >= fps }),
+        var demands: [CameraFrameRateDemand] = []
+        if analysisEnabled {
+            demands.append(CameraFrameRateDemand(minimum: 1 / cadence.analysisInterval))
+        }
+        if previewEnabled { demands.append(.preview) }
+        guard let fps = CameraFrameRateArbiter.rate(demands: demands, supported: low...high, constrained: powerConstrained),
+              ranges.contains(where: { $0.minFrameRate <= fps && $0.maxFrameRate >= fps }),
               (try? device.lockForConfiguration()) != nil else { return }
         defer { device.unlockForConfiguration() }
         if #available(macOS 15.0, *), device.isAutoVideoFrameRateEnabled { return }
         let duration = CMTime(seconds: 1 / fps, preferredTimescale: 600)
         device.activeVideoMinFrameDuration = duration
         device.activeVideoMaxFrameDuration = duration
+    }
+
+    /// Low Power Mode and serious thermal pressure lower the device toward the
+    /// consumers' minimums without changing the Vision cadence.
+    private static func isPowerConstrained() -> Bool {
+        let info = ProcessInfo.processInfo
+        return info.isLowPowerModeEnabled || info.thermalState == .serious || info.thermalState == .critical
+    }
+
+    private func observePowerChanges() {
+        let names = [Notification.Name.NSProcessInfoPowerStateDidChange, ProcessInfo.thermalStateDidChangeNotification]
+        for name in names {
+            powerObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
+                self?.refreshPowerState()
+            })
+        }
+    }
+
+    private func refreshPowerState() {
+        let constrained = Self.isPowerConstrained()
+        queue.async { [self] in
+            guard !stopped, powerConstrained != constrained else { return }
+            powerConstrained = constrained
+            applyFrameRate()
+        }
     }
 
     /// Hysteresis keeps a briefly empty frame from downclocking mid-conversation.
@@ -659,6 +737,8 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
             stopped = true
             for observer in observers { NotificationCenter.default.removeObserver(observer) }
             observers.removeAll()
+            for observer in powerObservers { NotificationCenter.default.removeObserver(observer) }
+            powerObservers.removeAll()
             for output in session.outputs {
                 (output as? AVCaptureVideoDataOutput)?.setSampleBufferDelegate(nil, queue: nil)
             }
@@ -666,6 +746,7 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
             for output in session.outputs { session.removeOutput(output) }
             for input in session.inputs { session.removeInput(input) }
             recognizer = nil
+            ownerDetector = nil
             activeDevice = nil
         }
     }
@@ -687,12 +768,11 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
             let sample = try autoreleasepool {
                 let faces: [VNFaceObservation]
                 if recognition {
-                    faces = try OwnerFaceDetector.observations(in: buffer)
+                    guard let ownerDetector else { throw OwnerModelError.unavailable }
+                    faces = try ownerDetector.observations(in: buffer)
                 } else {
-                    let request = VNDetectFaceRectanglesRequest()
-                    request.revision = VNDetectFaceRectanglesRequestRevision3
-                    try VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up, options: [:]).perform([request])
-                    faces = (request.results ?? []).filter { $0.confidence >= 0.6 }
+                    try visionHandler.perform([faceRequest], on: buffer, orientation: .up)
+                    faces = (faceRequest.results ?? []).filter { $0.confidence >= 0.6 }
                 }
                 updateIdleState(faceCount: faces.count, at: now)
                 var sample = NearbyFaceSample(count: faces.count, capturedAt: now, bounds: faces.map(\.boundingBox))

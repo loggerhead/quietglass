@@ -78,6 +78,7 @@ final class FaceCameraHub {
     /// samples; a viewer-only hub keeps the session alive for preview.
     private func applyClientConfiguration() {
         camera?.configureRecognition(clients.values.contains(where: \.recognition))
+        camera?.configurePreview(clients.values.contains(where: \.previewOnly))
         camera?.configureAnalysis(clients.values.contains(where: { !$0.previewOnly }))
     }
     func flush() async { await withCheckedContinuation { continuation in queue.async { continuation.resume() } } }

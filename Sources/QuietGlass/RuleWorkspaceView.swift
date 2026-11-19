@@ -222,6 +222,14 @@ struct RuleWorkspaceView: View {
                 Button { editorSession = RuleEditorSession(rule: nil) } label: { Label(QG("New setup…"), systemImage: "plus") }
                     .buttonStyle(RuleButtonStyle(tone: .primary)).accessibilityIdentifier("rules.new")
             }
+            HStack(spacing: 8) {
+                Text(QG("Automatic setups: %@", model.automaticRuntimeSummary)).font(.system(size: 12))
+                    .foregroundStyle(model.automaticRuntimeNeedsAttention ? Color.orange : RulePalette.secondary)
+                Spacer(minLength: 8)
+                if model.automaticRuntimeNeedsResume {
+                    Button(QG("Resume")) { model.setAutomaticDetection(true) }.buttonStyle(RuleButtonStyle(tone: .quiet))
+                }
+            }
             Text(QG("The switch allows a setup to work. Automatic setups wait for their conditions; manual actions can be used with a button or shortcut.")).font(.system(size: 12)).foregroundStyle(RulePalette.secondary)
             VStack(spacing: 0) {
                 ForEach(Array(coordinator.document.rules.enumerated()), id: \.element.id) { index, rule in

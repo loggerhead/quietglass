@@ -255,6 +255,15 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
                 Task { @MainActor in self?.nearby.resume(after: reason); self?.resumeCamera(after: reason) }
             })
         }
+        // Screen lock does not deactivate the session, so it needs its own
+        // distributed notification pair. Nothing can be seen or guarded behind
+        // the lock screen, and the camera should not keep the device busy.
+        observers.append(DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.nearby.suspend(for: .screenLocked); self?.pauseCamera(for: .screenLocked) }
+        })
+        observers.append(DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.nearby.resume(after: .screenLocked); self?.resumeCamera(after: .screenLocked) }
+        })
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
@@ -538,17 +547,21 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
             objectWillChange.send(); updateRuleShield(); return
         }
         guard enabled, trackingSource == .camera else { return }
-        connected = cameraTracking.policy.hasFace
-        calibrated = cameraTracking.policy.calibrated
+        let policy = cameraTracking.policy
+        var changed = false
+        if connected != policy.hasFace { connected = policy.hasFace; changed = true }
+        if calibrated != policy.calibrated { calibrated = policy.calibrated; changed = true }
         if calibrated { everCalibrated = true }
-        offset = cameraTracking.policy.offset
-        detail = cameraTracking.message
-        objectWillChange.send()
+        if offset != policy.offset { offset = policy.offset; changed = true }
+        if detail != cameraTracking.message { detail = cameraTracking.message; changed = true }
+        // Steady head-tracking frames only refresh overlay coverage; they do
+        // not invalidate every observing view.
+        if changed { objectWillChange.send() }
         updateShield()
     }
 
     func pauseCamera(for reason: NearbyPauseReason) {
-        if reason == .systemSleep || reason == .displaySleep || reason == .inactiveSession { protectionCoordinator?.suspend() }
+        if reason == .systemSleep || reason == .displaySleep || reason == .inactiveSession || reason == .screenLocked { protectionCoordinator?.suspend() }
         guard cameraPauses.insert(reason).inserted, cameraTracking.running else { return }
         protectCameraOnResume = protectCameraOnResume || cameraTracking.policy.calibrated || cameraTracking.policy.coverage > 0
         cameraTracking.stop(); updateRuleShield()
@@ -557,48 +570,107 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
 
     func resumeCamera(after reason: NearbyPauseReason) {
         guard cameraPauses.remove(reason) != nil else { return }
-        if !cameraPauses.contains(.systemSleep), !cameraPauses.contains(.displaySleep), !cameraPauses.contains(.inactiveSession) { protectionCoordinator?.wake() }
+        if !cameraPauses.contains(.systemSleep), !cameraPauses.contains(.displaySleep),
+           !cameraPauses.contains(.inactiveSession), !cameraPauses.contains(.screenLocked) { protectionCoordinator?.wake() }
         startCameraTracking()
     }
 
-    private var notchSuspendedRuleIDs: Set<UUID> = []
+    /// Setups the notch switch turned off, so switching it back on restores
+    /// exactly those setups instead of overriding individual choices.
+    private var notchSuspendedRuleIDs: Set<UUID> {
+        get { Set((presentationPreference("notchSuspendedRuleIDs") as? [String] ?? []).compactMap(UUID.init(uuidString:))) }
+        set { setPresentationPreference("notchSuspendedRuleIDs", newValue.map(\.uuidString).sorted()) }
+    }
     var headRulesEnabled: Bool {
         protectionCoordinator?.document.rules.contains { rule in if case .headTurn = rule.trigger { return rule.isEnabled }; return false } == true
     }
-    var currentAutomaticRuleIDs: Set<UUID> {
-        guard let coordinator = protectionCoordinator else { return [] }
-        let active = Set(coordinator.plan.activeRules.map(\.id))
-        return Set(coordinator.document.rules.filter { rule in
-            guard rule.isEnabled, active.contains(rule.id) else { return false }
+    private var automaticRules: [ProtectionRule] {
+        protectionCoordinator?.document.rules.filter { rule in
             if case .manual = rule.trigger { return false }; return true
-        }.map(\.id))
+        } ?? []
     }
-    var automaticDetectionEnabled: Bool { !currentAutomaticRuleIDs.isEmpty }
+    /// Configuration layer: the switch reflects whether any automatic setup is
+    /// switched on. Clearing or pausing protection only changes the runtime
+    /// state below, never these switches.
+    var automaticSetupsEnabled: Bool { automaticRules.contains(where: \.isEnabled) }
+    enum AutomaticRuntimeState: Equatable { case off, watching, protecting, warning, cleared, paused, suspended, unavailable }
+    var automaticRuntimeState: AutomaticRuntimeState {
+        guard automaticSetupsEnabled, let plan = protectionCoordinator?.plan else { return .off }
+        let automaticIDs = Set(automaticRules.map(\.id))
+        if plan.activeRules.contains(where: { automaticIDs.contains($0.id) }) { return .protecting }
+        if !plan.warnings.isEmpty { return .warning }
+        switch plan.state {
+        case .cleared: return .cleared
+        case .paused: return .paused
+        case .suspended: return .suspended
+        case .running: return nearby.canRetry || nearbyBlurUnavailable ? .unavailable : .watching
+        }
+    }
+    var automaticRuntimeNeedsAttention: Bool {
+        guard automaticSetupsEnabled else { return false }
+        if protectionCoordinator?.plan.warnings.isEmpty == false { return true }
+        return nearbyNeedsAttention
+    }
+    var automaticRuntimeNeedsResume: Bool {
+        switch automaticRuntimeState {
+        case .cleared, .paused, .suspended: return true
+        default: return false
+        }
+    }
+    var automaticRuntimeSummary: String {
+        switch automaticRuntimeState {
+        case .off: return QG("Off")
+        case .watching: return QG("On · Watching")
+        case .protecting: return QG("On · Protecting")
+        case .warning: return QG("On · Needs attention")
+        case .cleared: return QG("On · Cleared · Tap to resume")
+        case .paused: return QG("On · Paused · Tap to resume")
+        case .suspended: return QG("On · Waiting for your Mac")
+        case .unavailable: return QG("On · Needs attention")
+        }
+    }
+    /// The notch switch reflects saved configuration. Pressing it while the
+    /// runtime is cleared, paused, or suspended resumes instead of switching
+    /// every setup off; press again while running to switch setups off.
+    func toggleAutomaticSetups() {
+        if automaticSetupsEnabled, automaticRuntimeNeedsResume { setAutomaticDetection(true) }
+        else { setAutomaticDetection(!automaticSetupsEnabled) }
+    }
     func setAutomaticDetection(_ active: Bool) {
         guard let coordinator = protectionCoordinator else { return }
-        let targets = active ? notchSuspendedRuleIDs : currentAutomaticRuleIDs
-        guard !targets.isEmpty else {
-            // Clearing protection keeps setups enabled but suppresses their
-            // responses, so nothing is "active" yet. Turning detection back on
-            // should re-arm them instead of reporting that none exist.
-            let hasEnabledAutomatic = coordinator.document.rules.contains { rule in
-                guard rule.isEnabled else { return false }
-                if case .manual = rule.trigger { return false }; return true
+        let automatic = automaticRules
+        if active {
+            let disabled = Set(automatic.filter { !$0.isEnabled }.map(\.id))
+            notchSuspendedRuleIDs.formIntersection(disabled)
+            let targets = notchSuspendedRuleIDs
+            if !targets.isEmpty {
+                var rules = coordinator.document.rules
+                for index in rules.indices where targets.contains(rules[index].id) { rules[index].isEnabled = true }
+                do {
+                    try coordinator.saveRules(rules)
+                    notchSuspendedRuleIDs.subtract(targets)
+                } catch {
+                    captureNotice = "Protection rules could not be saved. Your previous rules are still in use."
+                    return
+                }
+            } else if !automatic.contains(where: \.isEnabled) {
+                captureNotice = "No automatic setup is switched on. Turn one on in Auto & shortcuts."
+                onOpenRules?(); return
             }
-            if active, hasEnabledAutomatic, (coordinator.plan.state == .cleared || coordinator.plan.state == .running) {
-                coordinator.resume(); return
-            }
-            captureNotice = "No automatic setup is currently active or available to resume. Review enabled setups and their conditions in Auto & shortcuts."
-            onOpenRules?(); return
+            // Clearing or pausing keeps setups enabled but stops responses, and
+            // the plan may not change on its own, so resume explicitly. Then
+            // re-arm sensors that stopped with an error.
+            if coordinator.plan.state != .running { coordinator.resume() }
+            nearby.rearm()
+            return
         }
+        let targets = Set(automatic.filter(\.isEnabled).map(\.id))
+        guard !targets.isEmpty else { return }
         var rules = coordinator.document.rules
-        for index in rules.indices where targets.contains(rules[index].id) {
-            if case .manual = rules[index].trigger { continue }
-            rules[index].isEnabled = active
-        }
+        for index in rules.indices where targets.contains(rules[index].id) { rules[index].isEnabled = false }
         do {
             try coordinator.saveRules(rules)
-            if active { notchSuspendedRuleIDs.subtract(targets) } else { notchSuspendedRuleIDs.formUnion(targets) }
+            notchSuspendedRuleIDs.formUnion(targets)
         } catch { captureNotice = "Protection rules could not be saved. Your previous rules are still in use." }
     }
 
@@ -1254,6 +1326,7 @@ final class AppModel: NSObject, ObservableObject, CMHeadphoneMotionManagerDelega
         for observer in observers {
             NotificationCenter.default.removeObserver(observer)
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            DistributedNotificationCenter.default().removeObserver(observer)
         }
     }
 }

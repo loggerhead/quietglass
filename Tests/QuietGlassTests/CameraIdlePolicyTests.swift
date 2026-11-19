@@ -10,7 +10,7 @@ final class CameraIdlePolicyTests: XCTestCase {
 
         XCTAssertTrue(policy.observe(faceCount: 1, at: 1))
         XCTAssertFalse(policy.idle)
-        XCTAssertEqual(policy.framesPerSecond, 10)
+        XCTAssertEqual(policy.framesPerSecond, 1 / 0.09, accuracy: 0.0001)
         XCTAssertEqual(policy.analysisInterval, 0.09, accuracy: 0.0001)
 
         XCTAssertFalse(policy.observe(faceCount: 0, at: 1.1))
@@ -70,30 +70,33 @@ final class CameraIdlePolicyTests: XCTestCase {
         XCTAssertFalse(policy.hardwareIdle)
     }
 
-    func testHardwareRateClampsToTheSupportedFormatRange() {
-        XCTAssertEqual(CameraIdlePolicy.hardwareFramesPerSecond(idle: true, supported: 15...30), 15)
-        XCTAssertEqual(CameraIdlePolicy.hardwareFramesPerSecond(idle: false, supported: 15...30), 30)
-        XCTAssertEqual(CameraIdlePolicy.hardwareFramesPerSecond(idle: true, supported: 1...60), 15)
-        XCTAssertEqual(CameraIdlePolicy.hardwareFramesPerSecond(idle: false, supported: 1...60), 30)
-        XCTAssertEqual(CameraIdlePolicy.hardwareFramesPerSecond(idle: true, supported: 60...120), 60)
-        XCTAssertEqual(CameraIdlePolicy.hardwareFramesPerSecond(idle: false, supported: 60...120), 60)
-        XCTAssertEqual(CameraIdlePolicy.hardwareFramesPerSecond(idle: true, supported: 24...24), 24)
-        XCTAssertEqual(CameraIdlePolicy.hardwareFramesPerSecond(idle: false, supported: 24...24), 24)
+    func testArbiterNeedsAtLeastOneConsumer() {
+        XCTAssertNil(CameraFrameRateArbiter.rate(demands: [], supported: 15...30, constrained: false))
+        XCTAssertNil(CameraFrameRateArbiter.rate(demands: [], supported: 15...30, constrained: true))
     }
 
-    func testPreviewIdlePolicyThrottlesOnlyAfterTheFaceFreeDelay() {
-        var policy = CameraPreviewIdlePolicy(now: 10)
-        XCTAssertFalse(policy.idle)
+    func testArbiterSatisfiesEveryMinimumAndRaisesToThePreferredRate() {
+        let analysis = CameraFrameRateDemand(minimum: 1 / 0.09)
+        let preview = CameraFrameRateDemand.preview
+        XCTAssertEqual(CameraFrameRateArbiter.rate(demands: [analysis, preview], supported: 15...30, constrained: false) ?? 0, 15)
+        XCTAssertEqual(CameraFrameRateArbiter.rate(demands: [preview], supported: 1...60, constrained: false) ?? 0, 15)
+        let analysisOnly = CameraFrameRateArbiter.rate(demands: [analysis], supported: 1...60, constrained: false) ?? 0
+        XCTAssertEqual(analysisOnly, 1 / 0.09, accuracy: 0.0001)
+    }
 
-        XCTAssertFalse(policy.observe(faceCount: 0, at: 10.3))
-        XCTAssertTrue(policy.observe(faceCount: 0, at: 10.7))
-        XCTAssertTrue(policy.idle)
-        XCTAssertFalse(policy.observe(faceCount: 0, at: 10.8), "Already idle must not reconfigure")
+    func testArbiterFallsBackToMinimumsUnderPowerPressure() {
+        let analysis = CameraFrameRateDemand(minimum: 1 / 0.09)
+        let preview = CameraFrameRateDemand.preview
+        let both = CameraFrameRateArbiter.rate(demands: [analysis, preview], supported: 1...60, constrained: true) ?? 0
+        XCTAssertEqual(both, 1 / 0.09, accuracy: 0.0001)
+        XCTAssertEqual(CameraFrameRateArbiter.rate(demands: [preview], supported: 1...60, constrained: true) ?? 0, 10)
+    }
 
-        XCTAssertTrue(policy.observe(faceCount: 1, at: 10.9))
-        XCTAssertFalse(policy.idle)
-        XCTAssertFalse(policy.observe(faceCount: 0, at: 11))
-        XCTAssertTrue(policy.observe(faceCount: 0, at: 11.6))
-        XCTAssertTrue(policy.idle)
+    func testArbiterClampsIntoTheSupportedFormatRange() {
+        let preview = CameraFrameRateDemand.preview
+        XCTAssertEqual(CameraFrameRateArbiter.rate(demands: [preview], supported: 15...30, constrained: false) ?? 0, 15)
+        XCTAssertEqual(CameraFrameRateArbiter.rate(demands: [preview], supported: 60...120, constrained: false) ?? 0, 60)
+        XCTAssertEqual(CameraFrameRateArbiter.rate(demands: [preview], supported: 24...24, constrained: false) ?? 0, 24)
+        XCTAssertEqual(CameraFrameRateArbiter.rate(demands: [CameraFrameRateDemand(minimum: 30)], supported: 15...30, constrained: true) ?? 0, 30)
     }
 }
