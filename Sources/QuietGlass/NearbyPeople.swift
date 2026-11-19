@@ -547,6 +547,9 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
     private var stopped = false
     private var observers: [NSObjectProtocol] = []
     private var analysisFailures = 0
+    private var lastThumbnail: FrameThumbnail?
+    private var lastForcedScan: TimeInterval = 0
+    private var lastFaceCount = 0
     private var recognition = false
     private var recognizer: OwnerFaceModel?
     // One handler and request live for the whole session; Vision results are
@@ -764,6 +767,19 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
         }
         guard now - lastScan >= cadence.analysisInterval, let buffer = sampleBuffer.imageBuffer else { return }
         lastScan = now
+        // Frame-diff prefilter. A face-free frame that looks the same as the
+        // last analyzed frame cannot produce a new result, so skip Vision and
+        // publish a fresh zero-face sample to keep presence timers advancing.
+        // A present face always bypasses the filter, and the forced scan bounds
+        // how long any change can stay unnoticed.
+        let fingerprint = lastFaceCount == 0 ? FrameThumbnail(buffer: buffer) : nil
+        if lastFaceCount == 0, now - lastForcedScan < FrameChangeDecision.forcedScanInterval,
+           let fingerprint, let lastThumbnail,
+           !FrameChangeDecision.changed(previous: lastThumbnail.pixels, current: fingerprint.pixels) {
+            updateIdleState(faceCount: 0, at: now)
+            completion(.success(NearbyFaceSample(count: 0, capturedAt: now)))
+            return
+        }
         do {
             let sample = try autoreleasepool {
                 let faces: [VNFaceObservation]
@@ -789,6 +805,11 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
                 }
                 return sample
             }
+            // The comparison reference only advances on a real scan, so a slow
+            // change accumulates instead of being re-baselined every frame.
+            lastThumbnail = sample.count == 0 ? fingerprint : nil
+            lastForcedScan = now
+            lastFaceCount = sample.count
             analysisFailures = 0
             completion(.success(sample))
         } catch {
