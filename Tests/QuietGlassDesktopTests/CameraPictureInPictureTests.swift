@@ -67,6 +67,29 @@ final class CameraPictureInPictureTests: OptInDesktopTestCase {
         XCTAssertTrue(viewer.running); XCTAssertTrue(viewer.session === viewerCamera.session)
     }
 
+    @MainActor func testPreviewThrottlesAfterFaceFreeSamplesAndRestoresOnFace() async {
+        _ = NSApplication.shared
+        var now = 10.0
+        var camera: PictureCamera!
+        let viewer = CameraPictureInPicture(access: { true }, makeCamera: { camera = PictureCamera($0); return camera }, clock: { now })
+        defer { viewer.close() }
+        viewer.show(cameraID: "A"); await settle()
+        XCTAssertFalse(viewer.previewIdle)
+        camera.completion(.success(NearbyFaceSample(count: 0, capturedAt: now))); await settle()
+        XCTAssertFalse(viewer.previewIdle, "The first face-free sample must not throttle")
+        now = 10.7
+        camera.completion(.success(NearbyFaceSample(count: 0, capturedAt: now))); await settle()
+        XCTAssertTrue(viewer.previewIdle)
+        camera.completion(.success(NearbyFaceSample(count: 1, capturedAt: now))); await settle()
+        XCTAssertFalse(viewer.previewIdle, "A face restores the full preview rate")
+        now = 11
+        camera.completion(.success(NearbyFaceSample(count: 0, capturedAt: now))); await settle()
+        XCTAssertFalse(viewer.previewIdle)
+        now = 11.4
+        camera.completion(.success(NearbyFaceSample(count: 0, capturedAt: now))); await settle()
+        XCTAssertTrue(viewer.previewIdle)
+    }
+
     @MainActor func testSleepAndInactiveSessionPauseUntilAllReasonsClear() async {
         _ = NSApplication.shared
         var cameras: [PictureCamera] = []

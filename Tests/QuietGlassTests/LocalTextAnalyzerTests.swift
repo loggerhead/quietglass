@@ -2,11 +2,23 @@
 
 import XCTest
 import AppKit
+import CoreVideo
 import Vision
 import ShieldCore
 @testable import QuietGlass
 
 final class LocalTextAnalyzerTests: XCTestCase {
+    func testLargeFramesAreDownsampledToTheAnalysisCap() throws {
+        var value: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 3000, 1000, kCVPixelFormatType_32BGRA, nil, &value), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(value)
+        let analyzer = LocalTextAnalyzer(options: .emailAddresses) { _ in }
+        let output = try XCTUnwrap(analyzer.downsampled(buffer))
+        XCTAssertEqual(CVPixelBufferGetWidth(output), 2048)
+        XCTAssertEqual(CVPixelBufferGetHeight(output), 683)
+        XCTAssertTrue(analyzer.downsampled(output) === output, "Frames within the cap must pass through unchanged")
+    }
+
     @MainActor func testVisionFindsSensitiveTextInAnActualRenderedImage() throws {
         let image = NSImage(size: NSSize(width: 1000, height: 300))
         image.lockFocus()

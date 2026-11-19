@@ -100,6 +100,38 @@ final class ScreenCapturePipelineTests: OptInDesktopTestCase {
         XCTAssertEqual(h.factory.counts.maximumLive, 1)
         XCTAssertEqual(ready, 1, "Capture readiness must not erase notices on every frame")
     }
+    @MainActor func testWarmCaptureStartsWithoutRenderingAndRendersWhenCoverageAppears() async throws {
+        _ = NSApplication.shared
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let id = try XCTUnwrap((screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value)
+        let frame = CGRect(x: 0, y: 0, width: 4, height: 4)
+        let factory = TestCaptureFactory(id: id)
+        let executor = ScreenBlurExecutor(loadDisplays: factory.load, makeCapture: factory.make, surfaceFrame: { _ in frame })
+        defer { factory.releaseAll(); executor.shutdown() }
+        let rule = ProtectionRule(name: "Nearby", trigger: .extraFace(detection: .anyFace), scope: .allDisplays,
+                                  action: .blur(BlurParameters(radius: 52), peek: nil), guards: [.permission(.camera)])
+        var engine = try ProtectionEngine(rules: [rule])
+        engine.send(.displays([ProtectionDisplay(id: id, frame: frame)]), at: 0)
+        engine.send(.permission(.screen, granted: true), at: 0)
+        engine.send(.permission(.camera, granted: true), at: 0)
+        engine.send(.escapeAvailability(true), at: 0)
+        var ready = 0; executor.onReady = { ready += 1 }
+        executor.apply(engine.send(.nearbyMonitoring(.anyFace, true), at: 0))
+        for _ in 0..<25 { await Task.yield() }
+        let capture = try XCTUnwrap(factory.captures.first)
+        XCTAssertEqual(factory.captures.count, 1, "Warm capture must keep one stream alive")
+        XCTAssertFalse(capture.rendering, "Warm-up must not pay for blur rendering")
+        XCTAssertFalse(capture.renderPlan.fullScreen)
+        XCTAssertEqual(capture.frameRate, 15)
+        capture.request.onFreshSample?()
+        for _ in 0..<5 { await Task.yield() }
+        XCTAssertEqual(ready, 1, "A raw warm-up frame must still announce capture readiness")
+        executor.apply(engine.send(.nearby(.anyFace, active: true, ownerVerified: true), at: 1))
+        XCTAssertEqual(factory.captures.count, 1, "Coverage must reuse the warm stream")
+        XCTAssertTrue(capture.rendering)
+        XCTAssertTrue(capture.renderPlan.fullScreen)
+        XCTAssertEqual(capture.frameRate, 20)
+    }
     @MainActor func testIndependentRegionRadiiShareTheCapturedFrameAndUpdateWithoutRestart() async throws {
         let h = try CapturePipelineHarness(); defer { h.finish() }
         let ref = ProtectedWindowRef(bundleID: "test.app", windowID: 1)

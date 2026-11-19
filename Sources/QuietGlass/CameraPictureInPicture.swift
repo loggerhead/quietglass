@@ -11,6 +11,8 @@ private final class CameraPictureInPicturePanel: NSPanel {
     @Published private(set) var session: AVCaptureSession?
     @Published private(set) var running = false
     @Published private(set) var message = "Starting camera…"
+    /// True while the shared preview can be capped at 15 fps.
+    @Published private(set) var previewIdle = false
     private var panel: NSPanel?
     private var camera: NearbyCameraSession?
     private var cameraID = ""
@@ -19,14 +21,17 @@ private final class CameraPictureInPicturePanel: NSPanel {
     private var workspaceObservers: [NSObjectProtocol] = []
     private var pausedReasons: Set<String> = []
     private var wantsCamera = false
+    private var previewPolicy: CameraPreviewIdlePolicy?
     private let access: () async -> Bool
+    private let clock: () -> TimeInterval
     private let makeCamera: (@escaping (Result<NearbyFaceSample, NearbyCameraFailure>) -> Void) -> NearbyCameraSession
 
     init(access: @escaping () async -> Bool = NearbyPeople.requestCameraAccess,
          makeCamera: @escaping (@escaping (Result<NearbyFaceSample, NearbyCameraFailure>) -> Void) -> NearbyCameraSession = {
              SharedFaceCamera(previewOnly: true, completion: $0)
-         }) {
-        self.access = access; self.makeCamera = makeCamera
+         },
+         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.access = access; self.makeCamera = makeCamera; self.clock = clock
         super.init()
         terminationObserver = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.close() }
@@ -84,9 +89,10 @@ private final class CameraPictureInPicturePanel: NSPanel {
                 Task { @MainActor in
                     guard let self, self.running, self.generation == token else { return }
                     switch result {
-                    case .success:
+                    case .success(let sample):
                         self.session = self.camera?.previewSession
                         self.message = "Live camera view"
+                        self.observePreview(faceCount: sample.count)
                     case .failure(let failure): self.fail(failure)
                     }
                 }
@@ -103,8 +109,16 @@ private final class CameraPictureInPicturePanel: NSPanel {
             ? "Use the camera selected for protection, then reopen picture in picture."
             : QG("%@. Check the camera and try again.", QG(failure.title))
     }
+    private func observePreview(faceCount: Int) {
+        let now = clock()
+        if previewPolicy == nil { previewPolicy = CameraPreviewIdlePolicy(now: now) }
+        guard previewPolicy?.observe(faceCount: faceCount, at: now) == true else { return }
+        previewIdle = previewPolicy?.idle ?? false
+    }
     private func stop() {
         generation += 1; camera?.stop(); camera = nil; session = nil; running = false
+        previewPolicy = nil
+        if previewIdle { previewIdle = false }
     }
     func pause(for reason: String) {
         pausedReasons.insert(reason)
@@ -135,7 +149,7 @@ private struct CameraPictureInPictureView: View {
     var body: some View {
         Group {
             if let session = viewer.session {
-                CameraPictureInPicturePreview(session: session)
+                CameraPictureInPicturePreview(session: session, idle: viewer.previewIdle)
                     .accessibilityLabel(QG("Live camera view"))
             } else {
                 VStack(spacing: 12) {
@@ -151,21 +165,49 @@ private struct CameraPictureInPictureView: View {
 
 private struct CameraPictureInPicturePreview: NSViewRepresentable {
     let session: AVCaptureSession
+    let idle: Bool
     func makeNSView(context: Context) -> CameraPictureInPictureSurface { CameraPictureInPictureSurface() }
     func updateNSView(_ view: CameraPictureInPictureSurface, context: Context) {
-        view.preview.session = session; view.needsLayout = true
+        view.setSession(session)
+        view.setIdle(idle)
+        view.needsLayout = true
     }
-    static func dismantleNSView(_ view: CameraPictureInPictureSurface, coordinator: ()) { view.preview.session = nil }
+    static func dismantleNSView(_ view: CameraPictureInPictureSurface, coordinator: ()) { view.setSession(nil) }
 }
 
 private final class CameraPictureInPictureSurface: NSView {
     let preview = AVCaptureVideoPreviewLayer()
+    private var idle = false
+    private var applied: (connection: ObjectIdentifier, fps: Double)?
+    private var startObserver: NSObjectProtocol?
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect); wantsLayer = true
         preview.videoGravity = .resizeAspect; layer?.backgroundColor = NSColor.black.cgColor
         layer?.addSublayer(preview)
     }
     required init?(coder: NSCoder) { nil }
+    deinit { if let startObserver { NotificationCenter.default.removeObserver(startObserver) } }
+
+    func setSession(_ session: AVCaptureSession?) {
+        guard preview.session !== session else { return }
+        if let startObserver { NotificationCenter.default.removeObserver(startObserver); self.startObserver = nil }
+        applied = nil
+        preview.session = session
+        if let session {
+            // The preview connection only exists once the shared session runs.
+            startObserver = NotificationCenter.default.addObserver(forName: AVCaptureSession.didStartRunningNotification, object: session, queue: .main) { [weak self] _ in
+                self?.applyFrameRate(force: true)
+            }
+        }
+        applyFrameRate(force: true)
+    }
+
+    func setIdle(_ value: Bool) {
+        guard idle != value else { return }
+        idle = value
+        applyFrameRate()
+    }
+
     override func layout() {
         super.layout(); CATransaction.begin(); CATransaction.setDisableActions(true)
         preview.frame = bounds
@@ -173,5 +215,24 @@ private final class CameraPictureInPictureSurface: NSView {
             connection.automaticallyAdjustsVideoMirroring = false; connection.isVideoMirrored = false
         }
         CATransaction.commit()
+        applyFrameRate()
+    }
+
+    /// The preview never runs faster than the camera's hardware target:
+    /// 15 fps while idle, full rate as soon as a face is seen.
+    private func applyFrameRate(force: Bool = false) {
+        guard let connection = preview.connection,
+              let device = preview.session?.inputs.compactMap({ ($0 as? AVCaptureDeviceInput)?.device }).first else { return }
+        let ranges = device.activeFormat.videoSupportedFrameRateRanges
+        guard let low = ranges.map(\.minFrameRate).min(),
+              let high = ranges.map(\.maxFrameRate).max(), low <= high else { return }
+        let fps = CameraIdlePolicy.hardwareFramesPerSecond(idle: idle, supported: low...high)
+        guard ranges.contains(where: { $0.minFrameRate <= fps && $0.maxFrameRate >= fps }) else { return }
+        let key = ObjectIdentifier(connection)
+        if !force, let applied, applied.connection == key, applied.fps == fps { return }
+        let duration = CMTime(seconds: 1 / fps, preferredTimescale: 600)
+        if connection.isVideoMinFrameDurationSupported { connection.videoMinFrameDuration = duration }
+        if connection.isVideoMaxFrameDurationSupported { connection.videoMaxFrameDuration = duration }
+        applied = (key, fps)
     }
 }

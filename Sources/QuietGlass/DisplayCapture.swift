@@ -15,6 +15,8 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private let onFrame: @MainActor (CGImage) -> Void
     private let onFailure: @MainActor (Error) -> Void
     private let onSample: ((CVPixelBuffer) -> Void)?
+    private let onFreshSample: (@MainActor () -> Void)?
+    private var reportedFreshSample = false
     private var renderPlan: ScreenBlurRenderPlan
     private let regionalRenderer = DisplayBlurRenderer()
     private let onRegionFrame: @MainActor (CGImage) -> Void
@@ -28,6 +30,7 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate {
          onFrame: @escaping @MainActor (CGImage) -> Void,
          onFailure: @escaping @MainActor (Error) -> Void,
          onSample: ((CVPixelBuffer) -> Void)? = nil,
+         onFreshSample: (@MainActor () -> Void)? = nil,
          onRegionFrame: @escaping @MainActor (CGImage) -> Void) {
         self.id = id
         self.configuration = configuration
@@ -37,6 +40,7 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         self.onFrame = onFrame
         self.onFailure = onFailure
         self.onSample = onSample
+        self.onFreshSample = onFreshSample
         super.init()
         stream = SCStream(filter: filter, configuration: configuration, delegate: self)
     }
@@ -104,6 +108,10 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate {
               let buffer = sampleBuffer.imageBuffer else { return }
         lastBuffer = buffer
         onSample?(buffer)
+        if !renderingEnabled, !reportedFreshSample {
+            reportedFreshSample = true
+            Task { @MainActor [onFreshSample] in onFreshSample?() }
+        }
         pendingBuffer = renderingEnabled ? buffer : nil
         renderNextFrame()
     }
@@ -119,7 +127,7 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate {
                 let regions = plan.regions.isEmpty ? nil : regionalRenderer.renderRegions(input, regions: plan.regions)
                 // A region-only frame reuses its composite for readiness; it does
                 // not also render an invisible full-screen image.
-                let full = plan.fullScreen ? renderer.render(input, radius: plan.radius) : regions
+                let full = plan.fullScreen ? renderer.render(input, radius: plan.radius, opaque: true) : regions
                 return (full, regions)
             }
             frameQueue.async { [self] in

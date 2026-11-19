@@ -87,8 +87,8 @@ final class ScreenBlurExecutor: ProtectionPlanExecuting {
                 fullSurfaces[id]?.update(coverage: display.fullScreenCoverage, direction: display.direction, excludedRegions: display.excludedRegions)
             }
             captures[id]?.setRenderPlan(renderPlan(display))
-            captures[id]?.setFrameRate(display.fullScreenCoverage > 0 || plan.captureDisplayIDs.contains(id) ? 30 : display.hasProtection ? 12 : 3)
-            captures[id]?.setRenderingEnabled(display.hasProtection || plan.captureDisplayIDs.contains(id) || (animatedCoverage[id] ?? 0) > 0)
+            captures[id]?.setFrameRate(frameRate(for: display))
+            captures[id]?.setRenderingEnabled(shouldRender(display))
             renderRegions(display)
         }
         startAnimation()
@@ -123,7 +123,21 @@ final class ScreenBlurExecutor: ProtectionPlanExecuting {
                 width: region.rectangle.width / frame.width, height: region.rectangle.height / frame.height), radius: region.blur.radius)
         } : []
         return ScreenBlurRenderPlan(radius: display.blur.radius, regions: regions,
-            fullScreen: display.fullScreenCoverage > 0 || plan?.captureDisplayIDs.contains(display.displayID) == true || (animatedCoverage[display.displayID] ?? 0) > 0)
+            fullScreen: display.fullScreenCoverage > 0 || (animatedCoverage[display.displayID] ?? 0) > 0)
+    }
+
+    /// Warm capture keeps a stream alive for nearby-face rules, but it must not
+    /// pay for blur rendering until there is something to cover. Capture-only
+    /// frames still feed OCR and readiness through `onFreshSample`.
+    private func shouldRender(_ display: DisplayProtectionPlan) -> Bool {
+        display.hasProtection || display.fullScreenCoverage > 0 || (animatedCoverage[display.displayID] ?? 0) > 0
+    }
+
+    private func frameRate(for display: DisplayProtectionPlan) -> Int32 {
+        if display.fullScreenCoverage > 0 || (animatedCoverage[display.displayID] ?? 0) > 0 { return 20 }
+        if plan?.captureDisplayIDs.contains(display.displayID) == true { return 15 }
+        if display.hasProtection { return 12 }
+        return 3
     }
 
     private func renderRegions(_ display: DisplayProtectionPlan) {
@@ -184,7 +198,7 @@ final class ScreenBlurExecutor: ProtectionPlanExecuting {
                     let session = UUID()
                     let config = SCStreamConfiguration()
                     config.width = max(1, display.width); config.height = max(1, display.height)
-                    config.minimumFrameInterval = CMTime(value: 1, timescale: current.fullScreenCoverage > 0 || self.plan?.captureDisplayIDs.contains(id) == true ? 30 : current.hasProtection ? 12 : 3)
+                    config.minimumFrameInterval = CMTime(value: 1, timescale: self.frameRate(for: current))
                     config.queueDepth = 3; config.backgroundColor = DisplayCapture.background
                     config.shouldBeOpaque = true; config.showsCursor = false; config.capturesAudio = false
                     config.scalesToFit = true; config.preservesAspectRatio = true; config.pixelFormat = kCVPixelFormatType_32BGRA
@@ -202,16 +216,15 @@ final class ScreenBlurExecutor: ProtectionPlanExecuting {
                         }
                     }
                     self.analyzers[id] = analyzer
-                    let request = ScreenCaptureRequest(id: session, display: display, configuration: config, renderPlan: self.renderPlan(current), renderingEnabled: current.hasProtection || self.plan?.captureDisplayIDs.contains(id) == true,
+                    let request = ScreenCaptureRequest(id: session, display: display, configuration: config, renderPlan: self.renderPlan(current), renderingEnabled: self.shouldRender(current),
                         onFrame: { [weak self] image in
                             guard let self, self.generation == token, self.captures[id]?.id == session else { return }
                             self.fullSurfaces[id]?.setImage(image)
-                            self.freshFrameIDs.insert(id)
+                            self.markFreshFrame(id, wanted: wanted)
                             if let current = self.plan?.displays.first(where: { $0.displayID == id }) {
                                 self.fullSurfaces[id]?.update(coverage: self.animatedCoverage[id] ?? current.fullScreenCoverage, direction: current.direction, excludedRegions: current.excludedRegions)
                                 self.renderRegions(current)
                             }
-                            if !self.announcedReady, wanted.isSubset(of: self.freshFrameIDs) { self.announcedReady = true; self.onReady?() }
                         }, onFailure: { [weak self] error in
                             guard let self, self.generation == token, self.captures[id]?.id == session else { return }
                             self.failedDisplays.insert(id)
@@ -219,6 +232,10 @@ final class ScreenBlurExecutor: ProtectionPlanExecuting {
                             if let capture = self.captures.removeValue(forKey: id) { self.enqueueStop(capture) }
                             self.onFailure?(error)
                         }, onSample: analyzer.map { worker in { worker.offer($0) } },
+                        onFreshSample: { [weak self] in
+                            guard let self, self.generation == token, self.captures[id]?.id == session else { return }
+                            self.markFreshFrame(id, wanted: wanted)
+                        },
                         onRegionFrame: { [weak self] image in
                             guard let self, self.generation == token, self.captures[id]?.id == session else { return }
                             self.regionSurfaces[id]?.setImage(image)
@@ -239,6 +256,11 @@ final class ScreenBlurExecutor: ProtectionPlanExecuting {
                 }
             }
         }
+    }
+
+    private func markFreshFrame(_ id: UInt32, wanted: Set<UInt32>) {
+        freshFrameIDs.insert(id)
+        if !announcedReady, wanted.isSubset(of: freshFrameIDs) { announcedReady = true; onReady?() }
     }
 
     private func stopIdleStreams() {

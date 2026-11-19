@@ -24,6 +24,19 @@ final class DisplayBlurRendererTests: XCTestCase {
         XCTAssertEqual(pixels(first), pixels(retained))
     }
 
+    func testOpaqueRenderSkipsThePreviousFrameFallback() throws {
+        let renderer = DisplayBlurRenderer()
+        let bounds = CGRect(x: 0, y: 0, width: 8, height: 8)
+        let red = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: bounds)
+        _ = try XCTUnwrap(renderer.render(red, radius: 0))
+        let clear = CIImage(color: .clear).cropped(to: bounds)
+        let output = try XCTUnwrap(renderer.render(clear, radius: 0, opaque: true))
+        let bytes = pixels(output)
+        for index in stride(from: 3, to: bytes.count, by: 4) {
+            XCTAssertEqual(bytes[index], 0, "Opaque capture frames must not composite the previous frame")
+        }
+    }
+
     func testFirstTransparentFrameAndResolutionChangeStayOpaque() throws {
         let renderer = DisplayBlurRenderer()
         for size in [4, 16] {

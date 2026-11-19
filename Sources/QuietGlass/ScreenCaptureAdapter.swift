@@ -38,6 +38,7 @@ struct ScreenCaptureRequest {
     let onFrame: @MainActor (CGImage) -> Void
     let onFailure: @MainActor (Error) -> Void
     let onSample: ((CVPixelBuffer) -> Void)?
+    let onFreshSample: (@MainActor () -> Void)?
     let onRegionFrame: @MainActor (CGImage) -> Void
 }
 enum ScreenCaptureAdapterError: Error { case missingFilter }
@@ -59,6 +60,6 @@ enum ScreenCaptureAdapter {
         return DisplayCapture(id: request.id, filter: filter, configuration: request.configuration,
             renderPlan: request.renderPlan, renderingEnabled: request.renderingEnabled,
             onFrame: request.onFrame, onFailure: request.onFailure, onSample: request.onSample,
-            onRegionFrame: request.onRegionFrame)
+            onFreshSample: request.onFreshSample, onRegionFrame: request.onRegionFrame)
     }
 }

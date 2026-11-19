@@ -2,6 +2,7 @@
 
 import Vision
 import CoreVideo
+import CoreImage
 import ShieldCore
 import CryptoKit
 
@@ -12,6 +13,10 @@ final class LocalTextAnalyzer {
     private var lastScan: TimeInterval = 0
     private var cancelled = false
     private var lastFingerprint: SHA256.Digest?
+    private let context = CIContext(options: [.cacheIntermediates: false])
+    /// Text recognition stays accurate well below native 5K resolution. Capping
+    /// the longest side keeps OCR and fingerprint work bounded on large displays.
+    private static let maxAnalysisDimension = 2048
     private struct Configuration { let id: UUID; let options: SensitiveTextOptions; let phrases: [String] }
     private let configurations: [Configuration]
     private let completion: @MainActor (Result<[UUID: [CGRect]], Error>) -> Void
@@ -50,7 +55,10 @@ final class LocalTextAnalyzer {
         lastScan = now
         lock.unlock()
         queue.async { [self] in
-            let fingerprint = FrameFingerprint.digest(buffer)
+            // OCR and the cache fingerprint share one downsampled image, so a
+            // cached scan is only reused when OCR would see identical pixels.
+            let analysis = downsampled(buffer) ?? buffer
+            let fingerprint = FrameFingerprint.digest(analysis)
             if let fingerprint, fingerprint == lastFingerprint {
                 lock.lock(); busy = false; lock.unlock()
                 return
@@ -61,7 +69,7 @@ final class LocalTextAnalyzer {
                     request.recognitionLevel = .accurate
                     request.usesLanguageCorrection = false
                     request.recognitionLanguages = ["en-US"]
-                    try VNImageRequestHandler(cvPixelBuffer: buffer, options: [:]).perform([request])
+                    try VNImageRequestHandler(cvPixelBuffer: analysis, options: [:]).perform([request])
                     return Self.regions(in: request.results ?? [], configurations: configurations)
                 }
             }
@@ -72,6 +80,25 @@ final class LocalTextAnalyzer {
             lock.unlock()
             if shouldDeliver { Task { @MainActor [completion] in completion(result) } }
         }
+    }
+
+    func downsampled(_ buffer: CVPixelBuffer) -> CVPixelBuffer? {
+        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+        let longest = max(width, height)
+        guard width > 0, height > 0 else { return nil }
+        guard longest > Self.maxAnalysisDimension else { return buffer }
+        let scale = Double(Self.maxAnalysisDimension) / Double(longest)
+        let targetWidth = max(1, Int((Double(width) * scale).rounded()))
+        let targetHeight = max(1, Int((Double(height) * scale).rounded()))
+        var output: CVPixelBuffer?
+        let attributes = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
+        guard CVPixelBufferCreate(nil, targetWidth, targetHeight, kCVPixelFormatType_32BGRA, attributes, &output) == kCVReturnSuccess,
+              let output else { return nil }
+        let image = CIImage(cvPixelBuffer: buffer)
+            .transformed(by: CGAffineTransform(scaleX: CGFloat(targetWidth) / CGFloat(width),
+                                               y: CGFloat(targetHeight) / CGFloat(height)))
+        context.render(image, to: output)
+        return output
     }
 
     static func regions(in observations: [VNRecognizedTextObservation], options: SensitiveTextOptions, phrases: [String] = []) -> [CGRect] {

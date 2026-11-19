@@ -3,21 +3,31 @@
 import CoreImage
 
 final class DisplayBlurRenderer {
+    // Every rendered frame is a new CIImage, so cached intermediates are never
+    // reused across frames; keeping the cache off bounds memory in steady state.
     private let context = CIContext(options: [.cacheIntermediates: false])
     private var previous: CGImage?
 
-    func render(_ input: CIImage, radius: Double) -> CGImage? {
+    /// `opaque` skips compositing over the previous frame. Screen capture frames
+    /// are opaque BGRA, so the fallback only matters for synthetic/transparent
+    /// inputs (and keeps the first frame opaque when there is no history).
+    func render(_ input: CIImage, radius: Double, opaque: Bool = false) -> CGImage? {
         guard !input.extent.isEmpty, !input.extent.isInfinite, !input.extent.isNull else { return previous }
         let blurred = radius > 0 ? input.clampedToExtent()
             .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius])
             .cropped(to: input.extent) : input
-        let background: CIImage
-        if let previous, previous.width == Int(input.extent.width), previous.height == Int(input.extent.height) {
-            background = CIImage(cgImage: previous)
+        let output: CIImage
+        if opaque {
+            output = blurred.cropped(to: input.extent)
         } else {
-            background = CIImage(color: CIColor(red: 0.08, green: 0.08, blue: 0.08)).cropped(to: input.extent)
+            let background: CIImage
+            if let previous, previous.width == Int(input.extent.width), previous.height == Int(input.extent.height) {
+                background = CIImage(cgImage: previous)
+            } else {
+                background = CIImage(color: CIColor(red: 0.08, green: 0.08, blue: 0.08)).cropped(to: input.extent)
+            }
+            output = blurred.composited(over: background).cropped(to: input.extent)
         }
-        let output = blurred.composited(over: background).cropped(to: input.extent)
         guard let image = context.createCGImage(output, from: input.extent) else { return previous }
         previous = image
         return image

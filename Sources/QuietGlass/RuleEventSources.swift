@@ -19,7 +19,7 @@ final class RuleEventSources {
     func start() {
         guard timer == nil else { onRetryCapture?(); refresh(); return }
         refresh()
-        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in if self?.needsGeometryPolling == true { self?.refresh() } }
         }
         self.timer = timer; RunLoop.main.add(timer, forMode: .common)
@@ -38,6 +38,21 @@ final class RuleEventSources {
             }
             switch rule.scope { case .window, .region, .displayRegion, .desktopRegion, .detectedText, .allDisplaysExceptActiveWindow: return true; default: return false }
         }
+    }
+
+    /// Only windows owned by apps with title-based rules need a title digest.
+    /// Everything else can be matched by bundle/window identity alone.
+    private var titleBundleIDs: Set<String> {
+        var values = Set<String>()
+        for rule in rules {
+            if case .windowTitle(let bundleID, _) = rule.trigger { values.insert(bundleID) }
+            switch rule.scope {
+            case .window(let ref), .region(let ref, _, _):
+                if ref.titleDigest != nil { values.insert(ref.bundleID) }
+            default: break
+            }
+        }
+        return values
     }
     func refresh() {
         if rules.contains(where: { rule in
@@ -67,7 +82,7 @@ final class RuleEventSources {
         if let pid = frontPID, bundles[pid] != frontBundleID { frontPID = nil; frontBundleID = nil; frontAppName = "No active app" }
         let items = PrivacyController.contentWindowItems(in: raw, bundleIdentifiers: bundles, displayFrames: NSScreen.screens.map(\.frame))
         let own = ProcessInfo.processInfo.processIdentifier
-        let windows = Self.windows(in: items, bundleIdentifiers: bundles, appPID: own, desktopTop: top)
+        let windows = Self.windows(in: items, bundleIdentifiers: bundles, appPID: own, desktopTop: top, titleBundleIDs: titleBundleIDs)
         let active = frontPID.flatMap { PrivacyController.frontWindowItem(in: items, for: $0) }
             .flatMap { $0[kCGWindowBounds as String] as? NSDictionary }.flatMap { CGRect(dictionaryRepresentation: $0) }
             .map { CGRect(x: $0.minX, y: top - $0.maxY, width: $0.width, height: $0.height) }
@@ -93,7 +108,8 @@ final class RuleEventSources {
         guard !closed.isEmpty else { return }
         remove { candidate in closed.contains { $0.id == candidate.id } }
     }
-    static func windows(in items: [[String: Any]], bundleIdentifiers: [pid_t: String], appPID: pid_t, desktopTop: CGFloat) -> [ProtectionWindow] {
+    static func windows(in items: [[String: Any]], bundleIdentifiers: [pid_t: String], appPID: pid_t, desktopTop: CGFloat,
+                        titleBundleIDs: Set<String>? = nil) -> [ProtectionWindow] {
         var windows: [ProtectionWindow] = [], occluders: [CGRect] = []
         for item in items {
             guard let owner = (item[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
@@ -104,7 +120,8 @@ final class RuleEventSources {
             let frame = CGRect(x: quartz.minX, y: desktopTop - quartz.maxY, width: quartz.width, height: quartz.height)
             if owner != appPID, layer == 0, let id = (item[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
                let bundle = bundleIdentifiers[owner] {
-                let title = item[kCGWindowName as String] as? String
+                let needsTitle = titleBundleIDs?.contains(bundle) ?? true
+                let title = needsTitle ? item[kCGWindowName as String] as? String : nil
                 windows.append(ProtectionWindow(reference: ProtectedWindowRef(bundleID: bundle, windowID: id, ownerPID: owner,
                     titleDigest: title.flatMap { $0.isEmpty ? nil : Self.titleDigest($0) }), frame: frame, occluders: occluders))
             }

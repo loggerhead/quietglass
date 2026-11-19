@@ -62,17 +62,23 @@ final class FaceCameraHub {
                 }
                 self.camera = camera
                 camera.configureDevice(device)
-                camera.configureRecognition(clients.values.contains(where: \.recognition))
+                applyClientConfiguration()
                 camera.start()
-            } else { camera?.configureRecognition(clients.values.contains(where: \.recognition)) }
+            } else { applyClientConfiguration() }
         }
     }
     func remove(_ id: UUID) {
         queue.async { [self] in
             guard clients.removeValue(forKey: id) != nil else { return }
             if clients.isEmpty { generation += 1; camera?.stop(); camera = nil }
-            else { camera?.configureRecognition(clients.values.contains(where: \.recognition)) }
+            else { applyClientConfiguration() }
         }
+    }
+    /// Analysis is only worth running when a protection client consumes face
+    /// samples; a viewer-only hub keeps the session alive for preview.
+    private func applyClientConfiguration() {
+        camera?.configureRecognition(clients.values.contains(where: \.recognition))
+        camera?.configureAnalysis(clients.values.contains(where: { !$0.previewOnly }))
     }
     func flush() async { await withCheckedContinuation { continuation in queue.async { continuation.resume() } } }
 }

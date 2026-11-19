@@ -137,6 +137,19 @@ final class FocusWindowTests: XCTestCase {
             bundleIdentifiers: [3: "example.private"], appPID: 1, desktopTop: screen.maxY).isEmpty)
     }
 
+    func testWindowTitlesAreOnlyHashedForBundlesWithTitleRules() {
+        var privateItem = window(background, pid: 3)
+        privateItem[kCGWindowName as String] = "Private document"
+        var publicItem = window(active, pid: 2)
+        publicItem[kCGWindowName as String] = "Public document"
+        let windows = RuleEventSources.windows(in: [privateItem, publicItem],
+            bundleIdentifiers: [2: "example.public", 3: "example.private"], appPID: 1, desktopTop: screen.maxY,
+            titleBundleIDs: ["example.private"])
+        XCTAssertNotNil(windows.first { $0.reference.bundleID == "example.private" }?.reference.titleDigest)
+        XCTAssertNil(windows.first { $0.reference.bundleID == "example.public" }?.reference.titleDigest,
+                     "Apps without title rules must not pay for title hashing")
+    }
+
     func testRememberedAreaFollowsMatchingWindowAcrossDisplayOriginsAndSizes() {
         let normalized = CGRect(x: 0.2, y: 0.3, width: 0.4, height: 0.2)
         let saved = SavedWindowArea(bundleID: "example.private", appName: "Private", windowTitle: "A document", rectangle: normalized)

@@ -7,10 +7,12 @@ private final class TrackingCamera: NearbyCameraSession {
     var started = false
     var stopped = false
     var recognition = false
+    var analysis = true
     init(_ completion: @escaping (Result<NearbyFaceSample, NearbyCameraFailure>) -> Void) { self.completion = completion }
     func start() { started = true }
     func stop() { stopped = true }
     func configureRecognition(_ value: Bool) { recognition = value }
+    func configureAnalysis(_ value: Bool) { analysis = value }
 }
 
 final class CameraHeadTrackingTests: XCTestCase {
@@ -92,6 +94,21 @@ final class CameraHeadTrackingTests: XCTestCase {
         XCTAssertEqual(cameras.count, 1); XCTAssertTrue(cameras[0].recognition)
         head.stop(); await hub.flush(); XCTAssertFalse(cameras[0].stopped)
         nearby.stop(); await hub.flush(); XCTAssertTrue(cameras[0].stopped)
+    }
+    func testHubRunsAnalysisOnlyWhenANonPreviewClientNeedsIt() async {
+        var cameras: [TrackingCamera] = []
+        let hub = FaceCameraHub(makeCamera: { let c = TrackingCamera($0); cameras.append(c); return c })
+        let viewer = SharedFaceCamera(hub: hub, previewOnly: true) { _ in }
+        viewer.start(); await hub.flush()
+        XCTAssertEqual(cameras.count, 1)
+        XCTAssertFalse(cameras[0].analysis, "A viewer-only hub must skip Vision")
+        let protection = SharedFaceCamera(hub: hub) { _ in }
+        protection.start(); await hub.flush()
+        XCTAssertTrue(cameras[0].analysis)
+        protection.stop(); await hub.flush()
+        XCTAssertFalse(cameras[0].analysis)
+        viewer.stop(); await hub.flush()
+        XCTAssertTrue(cameras[0].stopped)
     }
     func testCameraFeedDropsStaleWorkerCallbacksAfterRestart() async {
         var cameras: [TrackingCamera] = []

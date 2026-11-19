@@ -66,12 +66,16 @@ protocol NearbyCameraSession: AnyObject {
     func stop()
     func configureRecognition(_ enabled: Bool)
     func configureDevice(_ id: String?)
+    func configureIdle(_ idle: Bool)
+    func configureAnalysis(_ enabled: Bool)
 }
 
 extension NearbyCameraSession {
     var previewSession: AVCaptureSession? { nil }
     func configureRecognition(_ enabled: Bool) {}
     func configureDevice(_ id: String?) {}
+    func configureIdle(_ idle: Bool) {}
+    func configureAnalysis(_ enabled: Bool) {}
 }
 
 @MainActor
@@ -529,6 +533,10 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
     private var recognition = false
     private var recognizer: OwnerFaceModel?
     private var deviceID: String?
+    private var activeDevice: AVCaptureDevice?
+    private var cadence = CameraIdlePolicy()
+    private var analysisEnabled = true
+    private var deliveredReadiness = false
 
     init(recognition: Bool = false, completion: @escaping (Result<NearbyFaceSample, NearbyCameraFailure>) -> Void) {
         self.recognition = recognition; self.completion = completion
@@ -545,6 +553,26 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
         }
     }
     func configureDevice(_ id: String?) { queue.async { [self] in deviceID = id } }
+    func configureIdle(_ value: Bool) {
+        queue.async { [self] in
+            guard !stopped, cadence.idle != value else { return }
+            cadence.setIdle(value); applyFrameRate()
+        }
+    }
+    /// A preview-only hub has no consumer for face samples. Skipping Vision
+    /// keeps the shared session running for the viewer while dropping the
+    /// detection cost entirely.
+    func configureAnalysis(_ enabled: Bool) {
+        queue.async { [self] in
+            guard !stopped, analysisEnabled != enabled else { return }
+            analysisEnabled = enabled
+            deliveredReadiness = false
+            if !enabled {
+                cadence.setIdle(true)
+                applyFrameRate()
+            }
+        }
+    }
 
     func start() {
         queue.async { [self] in
@@ -575,26 +603,45 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
                     connection.automaticallyAdjustsVideoMirroring = false
                     connection.isVideoMirrored = false
                 }
-                limitFrameRate(device)
+                activeDevice = device
+                applyFrameRate()
                 observe(AVCaptureSession.runtimeErrorNotification, object: session, failure: .configuration)
                 observe(AVCaptureSession.wasInterruptedNotification, object: session, failure: .interrupted)
                 observe(AVCaptureDevice.wasDisconnectedNotification, object: device, failure: .disconnected)
                 session.startRunning()
+                // Starting the session can settle a different active format,
+                // so the clamped frame duration is applied again afterwards.
+                applyFrameRate()
                 if !session.isRunning { completion(.failure(.configuration)) }
             } catch { completion(.failure(error as? NearbyCameraFailure ?? .configuration)) }
         }
     }
 
-    private func limitFrameRate(_ device: AVCaptureDevice) {
-        let fps: Double = 10
-        guard let range = device.activeFormat.videoSupportedFrameRateRanges.first(where: { $0.minFrameRate <= fps && $0.maxFrameRate >= fps }),
+    /// The analysis interval in `captureOutput` bounds Vision work; this only
+    /// decides how fast the capture device itself runs. The desired rate is
+    /// clamped into the active format's supported range, so a 15–30 fps camera
+    /// idles at 15 and a face restores 30. If the device manages frame rate
+    /// automatically, leave the hardware alone.
+    private func applyFrameRate() {
+        guard let device = activeDevice else { return }
+        let ranges = device.activeFormat.videoSupportedFrameRateRanges
+        guard let low = ranges.map(\.minFrameRate).min(),
+              let high = ranges.map(\.maxFrameRate).max(), low <= high else { return }
+        let fps = CameraIdlePolicy.hardwareFramesPerSecond(idle: cadence.hardwareIdle, supported: low...high)
+        guard ranges.contains(where: { $0.minFrameRate <= fps && $0.maxFrameRate >= fps }),
               (try? device.lockForConfiguration()) != nil else { return }
         defer { device.unlockForConfiguration() }
         if #available(macOS 15.0, *), device.isAutoVideoFrameRateEnabled { return }
-        let duration = CMTime(value: 1, timescale: CMTimeScale(fps))
-        if CMTimeCompare(duration, range.maxFrameDuration) <= 0 && CMTimeCompare(duration, range.minFrameDuration) >= 0 {
-            device.activeVideoMinFrameDuration = duration
-        }
+        let duration = CMTime(seconds: 1 / fps, preferredTimescale: 600)
+        device.activeVideoMinFrameDuration = duration
+        device.activeVideoMaxFrameDuration = duration
+    }
+
+    /// Hysteresis keeps a briefly empty frame from downclocking mid-conversation.
+    /// Analysis drops first; the hardware follows after `hardwareIdleDelay`.
+    private func updateIdleState(faceCount: Int, at now: TimeInterval) {
+        _ = cadence.observe(faceCount: faceCount, at: now)
+        if cadence.updateHardware(at: now) { applyFrameRate() }
     }
 
     private func observe(_ name: Notification.Name, object: AnyObject, failure: NearbyCameraFailure) {
@@ -619,12 +666,22 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
             for output in session.outputs { session.removeOutput(output) }
             for input in session.inputs { session.removeInput(input) }
             recognizer = nil
+            activeDevice = nil
         }
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         let now = ProcessInfo.processInfo.systemUptime
-        guard !stopped, now - lastScan >= 0.09, let buffer = sampleBuffer.imageBuffer else { return }
+        guard !stopped else { return }
+        guard analysisEnabled else {
+            // A preview-only hub still needs one success so the viewer leaves
+            // its "Starting camera…" state even though Vision is skipped.
+            guard !deliveredReadiness else { return }
+            deliveredReadiness = true
+            completion(.success(NearbyFaceSample(count: 0, capturedAt: now)))
+            return
+        }
+        guard now - lastScan >= cadence.analysisInterval, let buffer = sampleBuffer.imageBuffer else { return }
         lastScan = now
         do {
             let sample = try autoreleasepool {
@@ -637,6 +694,7 @@ final class FaceCamera: NSObject, NearbyCameraSession, AVCaptureVideoDataOutputS
                     try VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up, options: [:]).perform([request])
                     faces = (request.results ?? []).filter { $0.confidence >= 0.6 }
                 }
+                updateIdleState(faceCount: faces.count, at: now)
                 var sample = NearbyFaceSample(count: faces.count, capturedAt: now, bounds: faces.map(\.boundingBox))
                 sample.faces = faces.map { CameraFace(bounds: $0.boundingBox, yaw: $0.yaw?.doubleValue, pitch: $0.pitch?.doubleValue) }
                 if recognition {
